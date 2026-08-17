@@ -9,6 +9,9 @@ MINIMUM_CAR_WEIGHT_KG = 768
 # [Engineering assumption] Regulatory minimum + reported industry early-season overweight margin
 VEHICLE_MASS_KG = 800
 
+# [Official] Internal Combustion Engine baseline power (~400 kW for 2026 regs)
+ICE_POWER_KW = 400.0
+
 # [Public estimate] Generic public F1 aero literature, adjusted by the regulation-stated ~drag-reduction target
 CDA = 0.95 # 0.9-1.0 m^2 equivalent
 
