@@ -1,45 +1,42 @@
-# Trackshift: 2026 F1 Energy Management Simulator
+# 🏎️ TrackShift Energy Intelligence
 
-Trackshift is a reduced-order point-mass simulator and Model Predictive Control (MPC) optimizer for predicting and managing optimal energy deployment strategies under the upcoming 2026 FIA Formula 1 Technical Regulations.
+TrackShift Energy Intelligence is a hackathon project built for the Plaksha University x Mphasis Foundation x Toyota Gazoo Racing Haas F1 Team collaboration.
 
-## Architecture
+It simulates a reduced-order, FIA-2026-regulation-grounded F1 car and battery. The system uses a Model Predictive Control (MPC) optimizer and an energy forecaster to dynamically deploy energy around a procedurally generated track, adapting to real-time physics and environmental disturbances.
 
-The project is structured into four main components:
-- `config/`: Contains the physical bounds and regulatory rules (`vehicle_config.py`, `battery_config.py`, `regulation_config.py`).
-- `core/`: The core physics and simulation engine, including the `Simulator`, `VehicleModel`, `BatteryModel`, and `MPCOptimizer`. It also includes procedural circuit generation (`TrackGenerator`).
-- `scripts/`: Executable scripts to run scenarios, such as the full lap simulation (`run_lap.py`) or monte carlo analyses.
-- `tests/`: Automated test suite for verifying physics and energy conservation bounds using `pytest`.
+## ✨ Features
 
-## Setup Instructions
+- **Live 3D Dashboard**: A beautifully designed, full-screen "Glassmorphism" telemetry dashboard that feels like a real F1 engineering terminal.
+- **Real-Time Physics Tuning**: Instantly adjust Vehicle Mass, Downforce (ClA), and Battery Capacity mid-race and watch the MPC optimizer adapt its strategy on the fly.
+- **Dynamic Environment Disturbances**: Inject Rain, Safety Cars, or MGU-K Failures to test the robustness of the energy deployment strategy.
+- **Cinematic 3D Visualization**: Built with Three.js. Features an automatic Chase Cam (with scroll-to-zoom) and a free-roaming Orbit Cam to watch the car race around the generated track.
+- **Advanced Telemetry**: Live energy prediction charts and readouts for Speed, Power, State of Charge (SOC), and Deployment Action (Attack, Coast, Harvest, Conserve).
 
-1. **Clone the repository.**
-2. **Set up a Python virtual environment:**
+## 🚀 How to Run
+
+1. **Install Dependencies**:
+   Ensure you have Python installed, then install the required packages:
    ```bash
-   python -m venv .venv
-   ```
-3. **Activate the environment:**
-   - **Windows:** `.\.venv\Scripts\activate`
-   - **Mac/Linux:** `source .venv/bin/activate`
-4. **Install dependencies:**
-   The project requires the following primary dependencies:
-   ```bash
-   pip install numpy scipy pytest matplotlib
+   pip install fastapi uvicorn numpy scipy pytest
    ```
 
-## Running the Simulator
+2. **Start the Server**:
+   Run the dashboard server from the root directory:
+   ```bash
+   python backend/dashboard_server.py
+   ```
 
-To simulate a complete lap with MPC energy deployment, braking logic, and procedural track generation, run the lap script from the root directory:
+3. **Open the Dashboard**:
+   Open your browser and navigate to:
+   **http://localhost:8001**
 
-```bash
-python scripts/run_lap.py
-```
+## 📂 Project Structure
 
-This will run the simulator over a dynamically generated track and output a telemetry plot (`lap_telemetry.png`) showing Speed, SOC, and MGU-K Power over the course of the lap.
+- **`backend/`**: Contains the Python simulation core (`simulator.py`, `vehicle_model.py`, `optimizer.py`, etc.), configurations, and the FastAPI `dashboard_server.py`.
+- **`frontend/`**: Contains the web assets (`index.html`, `style.css`, `app.js`, and the 3D car model). 
 
-## Running Tests
+## 🛠️ How to Use the Dashboard
 
-To run the suite of energy conservation and physics tests, simply execute:
-
-```bash
-pytest
-```
+- **Start/Pause/Reset**: Use the buttons in the top right to control the simulation loop.
+- **Camera Controls**: The default mode is **Orbit Cam**. Left-click and drag to rotate around the car, right-click to pan, and scroll to zoom. Switch to **Chase Cam** for a cinematic trailing view.
+- **Sidebars**: If the sidebars get in the way of the track, click the hamburger (`☰`) icons in the top corners to collapse them!
