@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TrackShift Energy Intelligence</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.0/umd/index.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="app-layout">
+        
+        <header class="glass-panel main-header">
+            <div class="header-left">
+                <button class="btn btn-icon" onclick="toggleSidebar('left')" title="Toggle Tuning Panel">☰</button>
+                <div class="logo">
+                    <span class="highlight">TRACK</span>SHIFT <span class="badge">INTELLIGENCE</span>
+                </div>
+            </div>
+            <div class="playback-controls">
+                <button id="btn-start" onclick="startRace()" class="btn btn-primary">START</button>
+                <button id="btn-pause" onclick="pauseRace()" class="btn btn-secondary">PAUSE</button>
+                <button id="btn-reset" onclick="resetRace()" class="btn btn-secondary">RESET</button>
+                <div class="select-wrapper">
+                    <select id="speed-select" title="Playback speed multiplier">
+                        <option value="0.25">0.25x SPEED</option>
+                        <option value="0.5">0.50x SPEED</option>
+                        <option value="1" selected>1.00x SPEED</option>
+                        <option value="2">2.00x SPEED</option>
+                        <option value="5">5.00x SPEED</option>
+                        <option value="10">10.0x SPEED</option>
+                    </select>
+                </div>
+                <button class="btn btn-icon" onclick="toggleSidebar('right')" title="Toggle Telemetry Panel">☰</button>
+            </div>
+        </header>
+
+        <!-- Left Sidebar: Tuning & Environment -->
+        <aside class="sidebar-left glass-panel">
+            <h2>PHYSICS TUNING</h2>
+            <div class="tuning-section">
+                <div class="slider-group">
+                    <div class="slider-header">
+                        <label>Vehicle Mass</label>
+                        <span class="slider-val"><span id="val-mass">798</span> kg</span>
+                    </div>
+                    <input type="range" id="tune-mass" min="700" max="900" value="798" step="1">
+                </div>
+                <div class="slider-group">
+                    <div class="slider-header">
+                        <label>Downforce (ClA)</label>
+                        <span class="slider-val"><span id="val-cla">4.50</span></span>
+                    </div>
+                    <input type="range" id="tune-cla" min="1.0" max="8.0" value="4.5" step="0.1">
+                </div>
+                <div class="slider-group">
+                    <div class="slider-header">
+                        <label>Battery Capacity</label>
+                        <span class="slider-val"><span id="val-cap">4.00</span> MJ</span>
+                    </div>
+                    <input type="range" id="tune-cap" min="2.0" max="6.0" value="4.0" step="0.1">
+                </div>
+            </div>
+
+            <h2 class="mt-4">ENVIRONMENT</h2>
+            <div class="disturbances">
+                <button id="btn-rain" onclick="injectRain()" class="btn btn-toggle">TOGGLE RAIN</button>
+                <button id="btn-sc" onclick="injectSC()" class="btn btn-toggle">SAFETY CAR</button>
+                <button id="btn-power" onclick="injectPower()" class="btn btn-toggle">MGU-K FAILURE</button>
+            </div>
+            
+            <div class="status-flags mt-4">
+                <div id="flag-rain" class="flag">RAIN</div>
+                <div id="flag-sc" class="flag">SAFETY CAR</div>
+                <div id="flag-power" class="flag">PWR LIMIT</div>
+            </div>
+        </aside>
+
+        <!-- Center: 3D View -->
+        <main class="viewport">
+            <div id="track-container"></div>
+            <div class="camera-controls glass-panel">
+                <select id="camera-mode-select">
+                    <option value="chase" selected>CHASE CAM</option>
+                    <option value="orbit">ORBIT CAM</option>
+                    <option value="free">FREE ROAM</option>
+                </select>
+            </div>
+        </main>
+
+        <!-- Right Sidebar: Telemetry & Strategy -->
+        <aside class="sidebar-right glass-panel">
+            <h2>LIVE TELEMETRY</h2>
+            <div class="metrics-grid">
+                <div class="metric-box">
+                    <span class="label">LAP</span>
+                    <span class="value" id="val-lap">0 / 0</span>
+                </div>
+                <div class="metric-box">
+                    <span class="label">SPEED</span>
+                    <span class="value"><span id="val-speed">0</span> <small>KM/H</small></span>
+                </div>
+                <div class="metric-box">
+                    <span class="label">POWER</span>
+                    <span class="value"><span id="val-power">0</span> <small>KW</small></span>
+                </div>
+                <div class="metric-box">
+                    <span class="label">SOC</span>
+                    <span class="value"><span id="val-soc">4.00</span> <small>MJ</small></span>
+                </div>
+            </div>
+
+            <h2 class="mt-4">MPC STRATEGY</h2>
+            <div class="strategy-readout">
+                <div class="action-box" id="val-action">WAITING</div>
+                <div class="metric-list">
+                    <div class="metric-row">
+                        <span>Predicted Finish:</span>
+                        <span><span id="val-ereq">0.00</span> MJ</span>
+                    </div>
+                    <div class="metric-row">
+                        <span>Uncertainty (σ):</span>
+                        <span>±<span id="val-sige">0.00</span> MJ</span>
+                    </div>
+                    <div class="metric-row">
+                        <span>Required Reserve:</span>
+                        <span><span id="val-rsafety">0.00</span> MJ</span>
+                    </div>
+                    <div class="metric-row highlight-row">
+                        <span>Deployable:</span>
+                        <span><span id="val-deployable">0.00</span> MJ</span>
+                    </div>
+                </div>
+                <div class="robustness-box" id="val-robustness">
+                    ROBUSTNESS: HIGH (SAFE)
+                </div>
+            </div>
+            
+            <h2 class="mt-4">ENERGY PREDICTION</h2>
+            <div class="chart-container">
+                <canvas id="energyChart"></canvas>
+            </div>
+        </aside>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

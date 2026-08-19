@@ -1,0 +1,212 @@
+TRACKSHIFT ENERGY INTELLIGENCE - PROJECT STATUS
+Last updated: 2026-08-19
+
+================================================================================
+1. WHAT THIS PROJECT IS
+================================================================================
+
+TrackShift Energy Intelligence is a hackathon project (Plaksha University x
+Mphasis Foundation x Toyota Gazoo Racing Haas F1 Team). It simulates a
+reduced-order, FIA-2026-regulation-grounded F1 car and battery, then compares
+several energy-deployment strategies (dumb baselines, a real MPC optimizer,
+and an offline "Oracle" upper bound) racing around a procedurally generated
+track. The end goal (per the PRD) is a live dashboard + a second working
+configuration of the same optimizer for an EV delivery-fleet use case, but
+that work has not started yet -- see section 5.
+
+Full requirements: TrackShift_Energy_Intelligence_PRD_v2.pdf (same folder).
+Original repo this was cloned from: https://github.com/royyy02/trackshift
+
+================================================================================
+2. FOLDER LAYOUT (as of this update)
+================================================================================
+
+Everything now lives directly under:
+    C:\Users\aarav\Desktop\TrackShift\
+
+    TrackShift/
+      TrackShift_Energy_Intelligence_PRD_v2.pdf   <- the requirements doc
+      PROJECT_INFO.txt                            <- this file
+      README.md
+      .git/                                       <- git history preserved
+      .gitignore
+      config/
+        vehicle_config.py        vehicle mass/aero/grip params (labeled
+                                  Official/Public-estimate/Engineering-assumption)
+        battery_config.py        battery capacity + round-trip efficiency
+        regulation_config.py     FIA 2026 power/energy limits (single source
+                                  of truth -- nothing else hardcodes these)
+      core/
+        vehicle_model.py         point-mass car physics, corner-speed limit
+        battery_model.py         SOC state, charge/discharge with efficiency
+        track_generator.py       procedural closed-circuit track generation
+        simulator.py             the race loop (ties vehicle+battery+track together)
+        forecaster.py            energy-required prediction + uncertainty (crude MVP)
+        optimizer.py             MPC optimizer (receding-horizon, scipy SLSQP)
+        oracle.py                offline "perfect future knowledge" upper bound
+        baselines.py             4 simple non-optimized comparison policies
+      scripts/
+        run_lap.py               single-lap demo, saves lap_telemetry.png
+        run_monte_carlo.py       runs all 6 policies once and prints a comparison
+      tests/
+        test_conservation.py     energy-conservation / SOC-bounds physics tests
+        test_track_generator.py  track generation constraint tests
+        test_simulator_laps.py   multi-lap race-state tests
+
+Note: an empty leftover folder named "trackshift" may still be sitting next
+to these -- I moved everything out of it but Windows wouldn't let an
+automated process delete the empty directory itself (a file lock, most
+likely held by VS Code or another open handle). It's safe to delete by hand
+in File Explorer; it contains nothing.
+
+================================================================================
+3. HOW TO SET UP AND RUN
+================================================================================
+
+One-time setup (from the TrackShift folder):
+    python -m pip install numpy scipy pytest matplotlib
+
+Run the automated test suite:
+    python -m pytest -q
+    (22 tests, all passing as of this update)
+
+Run a single-lap demo (MPC-driven, produces lap_telemetry.png):
+    python scripts/run_lap.py
+
+Run all 6 policies over one race and compare them:
+    python scripts/run_monte_carlo.py
+
+Run any core file directly to sanity-check it in isolation (each now has a
+small demo block under `if __name__ == "__main__":`), from ANY directory,
+including from inside core/ itself:
+    python core/vehicle_model.py
+    python core/battery_model.py
+    python core/track_generator.py
+    python core/simulator.py
+    python core/forecaster.py
+    python core/optimizer.py
+    python core/oracle.py
+    python core/baselines.py
+
+(These all used to fail with "ModuleNotFoundError: No module named 'core'"
+if run from inside the core/ folder -- fixed, see section 4.)
+
+================================================================================
+4. WHAT WAS FIXED IN THIS SESSION
+================================================================================
+
+A) Import errors when running files directly
+   Every file in core/ and scripts/run_monte_carlo.py now inserts the
+   project root onto sys.path at the top of the file, so `python
+   core/whatever.py` works regardless of which directory you're standing in
+   when you run it. Also added a small runnable demo (`if __name__ ==
+   "__main__":`) to every core/*.py file so each one prints something useful
+   when run directly, instead of doing nothing.
+
+B) Deployment-curve config bug
+   config/regulation_config.py's DEPLOYMENT_CURVE started at 250 kW at 0
+   km/h; the PRD's own literal config (Section 2.1) says 350 kW. Fixed to
+   match the PRD exactly, since this config is supposed to be the single
+   source of truth.
+
+C) Track generator hardened
+   core/track_generator.py was a rough 3-class stub with no length/radius
+   bounds and no feasibility check. Rewritten to implement all 6 PRD track
+   classes (High-speed, Technical, Balanced, Heavy-braking, Energy-intensive,
+   Energy-recovery-heavy), the PRD's straight-length/corner-radius bands,
+   the 3.5-7.0 km total-length bound, and a feasibility check that resamples
+   any track containing a corner the car physically can't brake for in time.
+
+D) Multi-lap race structure
+   core/simulator.py previously only supported a single one-shot distance
+   traverse. It now supports proper multi-lap races: `lap`,
+   `distance_remaining_m`, `is_finished`, and lap wrap-around that stops
+   cleanly at the finish line on the final lap.
+
+E) Oracle was effectively unusable (performance bug)
+   core/oracle.py was re-solving a ~100-variable optimization problem from
+   scratch on every single simulated timestep (~0.6-0.7 seconds PER CALL),
+   which for a multi-hundred-step race meant tens of minutes to finish one
+   race. Per the PRD, the Oracle should be a single OFFLINE solve over the
+   whole race with perfect future knowledge -- rewritten so it solves once
+   (on the first call) and replays the cached plan afterward. A full race
+   now takes ~0.6 seconds total instead of ~20+ minutes.
+
+F) ICE was silently disabled for almost every policy (correctness bug)
+   core/simulator.py only let the 400 kW combustion engine (ICE) contribute
+   power when regen power was not REQUESTED -- but Baselines 1-3 and the
+   optimizer/Oracle's "not deploying" fallback all requested full regen by
+   default even when just cruising, not braking for a corner. This
+   permanently disabled the ICE for the rest of the run in those cases,
+   producing nonsensical results (one baseline took 1909 seconds to cover a
+   lap that should take ~65s; the Oracle covered 0 meters). Fixed by gating
+   the ICE on whether regen ACTUALLY occurred (physically), not merely
+   requested, and by changing the baselines'/optimizer's "not deploying"
+   fallback from "request full regen" (a phantom brake) to a true coast
+   (request nothing, let the ICE run). All 6 policies now finish the same
+   track within a sane 62-69 second band.
+
+G) Repo hygiene
+   Added .gitignore (there wasn't one) and untracked the __pycache__/*.pyc
+   files that had accidentally been committed.
+
+Every fix above was actually run and verified (pytest + both scripts +
+every core file standalone), not just read through.
+
+================================================================================
+5. KNOWN ISSUES / NOT YET DONE
+================================================================================
+
+1. Corner-speed-limit physics bug (found but NOT fixed -- flagging for next
+   session). core/vehicle_model.py's get_corner_speed_limit() computes an
+   unphysical result for anything above ~105m corner radius: at radius=100m
+   it returns a "speed limit" of 1216 km/h, and at radius=150m+ it returns
+   literally infinite (no limit at all). Root cause: the formula assumes
+   downforce generated AT the cornering speed contributes to grip, and with
+   the current PEAK_LATERAL_ACCELERATION_G=5.0 and CLA=2.5 estimates, the
+   equation's denominator goes negative/zero for any radius above ~105m --
+   which covers most of what the track generator calls "medium" and
+   "high-speed" corners. Practical effect: those corners currently impose NO
+   speed cap on the car at all in the simulator. Needs either a different
+   downforce assumption or capping the result at a sane maximum (e.g. the
+   deployment curve's own ~355 km/h ceiling) rather than letting the
+   quadratic blow up.
+
+2. Forecaster is a crude stub (Section 13/14 of the PRD is P1, not started
+   for real). core/forecaster.py hardcodes "average 200 kW at 60 m/s"
+   regardless of the actual track or telemetry. This is why the Oracle
+   currently finishes with a completely full, untouched 4 MJ battery and a
+   SLOWER time than the baselines: over a full-race horizon, this crude
+   estimate predicts needing ~17 MJ against a 4 MJ battery, so the
+   optimizer's reserve penalty (which is also unit-mismatched -- kW reward
+   vs MJ-scaled penalty) makes it almost never want to deploy. The Oracle is
+   supposed to be the upper bound, not the worst performer.
+
+3. Nothing from PRD Part V (dashboard) has been built. The only visual
+   output is the static lap_telemetry.png from run_lap.py.
+
+4. No scenario injector (rain, safety car, FIA limited-power-mode toggle --
+   PRD Section 19) -- the "adaptive replanning" demo mechanic doesn't exist
+   yet.
+
+5. No EV-fleet transfer configuration (PRD Section 31) -- the second
+   "working configuration" proving the optimizer core is domain-agnostic
+   hasn't been started.
+
+6. No train/validation/unseen-test seed split wired into the Monte Carlo
+   runner (PRD Section 25), and run_monte_carlo.py only runs a single race
+   per policy, not the "hundreds to low thousands" sweep the PRD describes.
+
+================================================================================
+6. SUGGESTED NEXT STEPS (in rough priority order per the PRD's own P0/P1/P2)
+================================================================================
+
+  P0 (still worth polishing): fix the corner-speed-limit bug (#1 above) --
+      it's silently breaking the physical realism of every "high-speed" and
+      most "medium" corners.
+  P1: real Forecaster + fix the optimizer's kW/MJ unit mismatch in its
+      reserve penalty, so the Oracle actually behaves like an upper bound.
+  P1: scenario injector + uncertainty-aware dynamic reserve (this is the
+      core "adaptive replanning" demo mechanic judges will want to see).
+  P1: dashboard (live track view, strategy "why" panel, energy graphs).
+  P1: EV-fleet transfer config, reusing the same optimizer core.
