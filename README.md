@@ -17,7 +17,7 @@ It simulates a reduced-order, FIA-2026-regulation-grounded F1 car and battery. T
 1. **Install Dependencies**:
    Ensure you have Python installed, then install the required packages:
    ```bash
-   pip install fastapi uvicorn numpy scipy pytest
+   pip install fastapi "uvicorn[standard]" numpy scipy pytest
    ```
 
 2. **Start the Server**:

@@ -22,9 +22,13 @@
                 <div class="logo">
                     <span class="highlight">TRACK</span>SHIFT <span class="badge">INTELLIGENCE</span>
                 </div>
+                <div class="status-pill" id="status-pill">
+                    <span class="status-dot"></span>
+                    <span id="status-pill-text">CONNECTING</span>
+                </div>
             </div>
             <div class="playback-controls">
-                <button id="btn-start" onclick="startRace()" class="btn btn-primary">START</button>
+                <button id="btn-start" onclick="startRace()" class="btn btn-primary" disabled>START</button>
                 <button id="btn-pause" onclick="pauseRace()" class="btn btn-secondary">PAUSE</button>
                 <button id="btn-reset" onclick="resetRace()" class="btn btn-secondary">RESET</button>
                 <div class="select-wrapper">
@@ -43,7 +47,46 @@
 
         <!-- Left Sidebar: Tuning & Environment -->
         <aside class="sidebar-left glass-panel">
-            <h2>PHYSICS TUNING</h2>
+            <div class="mode-toggle" style="display: flex; align-items: center; background: rgba(0,0,0,0.2); padding: 8px 12px; border-radius: 6px; margin-bottom: 16px;">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="fleet-toggle" onchange="toggleFleetMode()">
+                    <span class="slider round"></span>
+                </label>
+                <span id="mode-label" style="font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--text-primary); margin-left: 12px; margin-top: 2px;">F1 MOTORSPORT</span>
+            </div>
+            <h2>RACE SETUP</h2>
+            <div class="setup-section">
+                <div class="field-group">
+                    <label class="field-label">Track Character</label>
+                    <select id="track-class-select" class="full-select">
+                        <option value="Balanced" selected>Balanced</option>
+                        <option value="High-speed">High-Speed</option>
+                        <option value="Technical">Technical</option>
+                        <option value="Heavy-braking">Heavy-Braking</option>
+                        <option value="Energy-intensive">Energy-Intensive</option>
+                        <option value="Energy-recovery-heavy">Energy-Recovery-Heavy</option>
+                    </select>
+                </div>
+                <div class="field-group">
+                    <label class="field-label">Race Distance</label>
+                    <select id="laps-select" class="full-select">
+                        <option value="1">1 Lap (Sprint)</option>
+                        <option value="3">3 Laps</option>
+                        <option value="5" selected>5 Laps</option>
+                        <option value="10">10 Laps</option>
+                    </select>
+                </div>
+                <div class="field-group seed-row">
+                    <div>
+                        <label class="field-label">Seed</label>
+                        <div class="seed-readout" id="seed-readout">random</div>
+                    </div>
+                    <button class="btn btn-icon" onclick="randomizeSeed()" title="New random track seed">🎲</button>
+                </div>
+                <p class="setup-hint">Changes apply on the next START (or RESET then START to re-roll mid-race).</p>
+            </div>
+
+            <h2 class="mt-4">PHYSICS TUNING</h2>
             <div class="tuning-section">
                 <div class="slider-group">
                     <div class="slider-header">
@@ -80,40 +123,120 @@
                 <div id="flag-sc" class="flag">SAFETY CAR</div>
                 <div id="flag-power" class="flag">PWR LIMIT</div>
             </div>
+            
+            <h2 class="mt-4">EVENT TIMELINE</h2>
+            <div id="timeline-container" class="timeline-container">
+                <div class="timeline-empty">No events yet</div>
+            </div>
         </aside>
 
         <!-- Center: 3D View -->
         <main class="viewport">
             <div id="track-container"></div>
+
+            <div class="minimap-panel glass-panel">
+                <div class="minimap-title">TRACK MAP</div>
+                <svg id="minimap-svg" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid meet"></svg>
+            </div>
+
             <div class="camera-controls glass-panel">
                 <select id="camera-mode-select">
                     <option value="chase" selected>CHASE CAM</option>
                     <option value="orbit">ORBIT CAM</option>
                     <option value="free">FREE ROAM</option>
                 </select>
+                <span id="camera-hint" class="camera-hint-text"></span>
+            </div>
+
+            <div class="toast-container" id="toast-container"></div>
+
+            <div class="finish-overlay" id="finish-overlay">
+                <div class="finish-card glass-panel">
+                    <div class="finish-title">RACE COMPLETE</div>
+                    <div class="finish-subtitle" id="finish-track-label">Balanced &middot; 5 laps</div>
+                    <div class="finish-stats-grid">
+                        <div class="finish-stat">
+                            <span class="label">Total Time</span>
+                            <span class="value" id="finish-time">0:00.00</span>
+                        </div>
+                        <div class="finish-stat">
+                            <span class="label">Best Lap</span>
+                            <span class="value" id="finish-best-lap">--</span>
+                        </div>
+                        <div class="finish-stat">
+                            <span class="label">Avg Speed</span>
+                            <span class="value" id="finish-avg-speed">0 <small>KM/H</small></span>
+                        </div>
+                        <div class="finish-stat">
+                            <span class="label">Final SOC</span>
+                            <span class="value" id="finish-soc">0.00 <small>MJ</small></span>
+                        </div>
+                    </div>
+                    <div class="finish-actions-breakdown" id="finish-actions"></div>
+                    
+                    <!-- Performance Comparison Panel -->
+                    <div class="baseline-comparison" id="baseline-comparison" style="margin: 20px 0; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 12px; background: rgba(0,0,0,0.3);">
+                        <div style="font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--text-secondary); margin-bottom: 10px; text-transform: uppercase;">Performance vs. Baselines</div>
+                        <table style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); color: var(--text-secondary);">
+                                    <th style="padding-bottom: 6px;">Strategy</th>
+                                    <th style="padding-bottom: 6px;">Total Time</th>
+                                    <th style="padding-bottom: 6px;">Delta vs Oracle</th>
+                                </tr>
+                            </thead>
+                            <tbody id="baseline-table-body">
+                                <tr>
+                                    <td colspan="3" style="padding-top: 10px; text-align: center; color: var(--text-secondary); font-style: italic;">Computing baseline metrics...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <button class="btn btn-primary finish-close" onclick="closeFinishOverlay()">NEW RACE</button>
+                </div>
             </div>
         </main>
 
         <!-- Right Sidebar: Telemetry & Strategy -->
         <aside class="sidebar-right glass-panel">
             <h2>LIVE TELEMETRY</h2>
+            <div class="gauge-grid">
+                <div class="gauge-box">
+                    <div class="gauge-ring" id="gauge-speed" style="--pct:0">
+                        <div class="gauge-inner">
+                            <span class="gauge-value"><span id="val-speed">0</span></span>
+                            <span class="gauge-unit">KM/H</span>
+                        </div>
+                    </div>
+                    <span class="gauge-label">SPEED</span>
+                </div>
+                <div class="gauge-box">
+                    <div class="gauge-ring gauge-ring-soc" id="gauge-soc" style="--pct:100">
+                        <div class="gauge-inner">
+                            <span class="gauge-value"><span id="val-soc">4.00</span></span>
+                            <span class="gauge-unit">MJ</span>
+                        </div>
+                    </div>
+                    <span class="gauge-label">SOC</span>
+                </div>
+            </div>
             <div class="metrics-grid">
                 <div class="metric-box">
                     <span class="label">LAP</span>
                     <span class="value" id="val-lap">0 / 0</span>
                 </div>
                 <div class="metric-box">
-                    <span class="label">SPEED</span>
-                    <span class="value"><span id="val-speed">0</span> <small>KM/H</small></span>
-                </div>
-                <div class="metric-box">
                     <span class="label">POWER</span>
                     <span class="value"><span id="val-power">0</span> <small>KW</small></span>
                 </div>
-                <div class="metric-box">
-                    <span class="label">SOC</span>
-                    <span class="value"><span id="val-soc">4.00</span> <small>MJ</small></span>
+            </div>
+            <div class="power-flow-bar">
+                <div class="power-flow-track">
+                    <div class="power-flow-fill" id="power-flow-fill"></div>
+                    <div class="power-flow-zero"></div>
                 </div>
+                <div class="power-flow-labels"><span>REGEN</span><span>DEPLOY</span></div>
             </div>
 
             <h2 class="mt-4">MPC STRATEGY</h2>
@@ -142,6 +265,28 @@
                 </div>
             </div>
             
+            <div id="overtake-panel" class="overtake-panel" style="display: none;">
+                <div class="overtake-title">⚡ OVERTAKE WINDOW</div>
+                <div class="metric-list">
+                    <div class="metric-row">
+                        <span>Expected Reward:</span>
+                        <span class="highlight-text">-<span id="overtake-reward">0.00</span> s</span>
+                    </div>
+                    <div class="metric-row">
+                        <span>Physical Cost:</span>
+                        <span><span id="overtake-cost">0.00</span> MJ</span>
+                    </div>
+                </div>
+                <div class="robustness-box" id="overtake-risk">
+                    RISK: EVALUATING...
+                </div>
+            </div>
+            
+            <h2 class="mt-4">LAP TIMES</h2>
+            <div class="lap-times-list" id="lap-times-list">
+                <div class="lap-times-empty">No laps completed yet</div>
+            </div>
+
             <h2 class="mt-4">ENERGY PREDICTION</h2>
             <div class="chart-container">
                 <canvas id="energyChart"></canvas>

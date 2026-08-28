@@ -37,8 +37,32 @@ def test_generation_is_deterministic_per_seed():
     """Reproducibility (PRD §30): same class+seed must yield the same track."""
     track_a = TrackGenerator(track_class="Technical", seed=7).generate_track()
     track_b = TrackGenerator(track_class="Technical", seed=7).generate_track()
-    assert [(s.segment_type, s.length_m, s.radius_m) for s in track_a] == \
-        [(s.segment_type, s.length_m, s.radius_m) for s in track_b]
+    assert [(s.segment_type, s.length_m, s.radius_m, s.direction) for s in track_a] == \
+        [(s.segment_type, s.length_m, s.radius_m, s.direction) for s in track_b]
+
+
+@pytest.mark.parametrize("track_class", list(TRACK_CLASSES))
+def test_generated_track_closes_into_a_loop(track_class):
+    """
+    The 2D layout the frontend draws (core/track_generator.py's TrackSegment.direction plus
+    the appended closing path) must actually return to the start/finish pose -- otherwise the
+    dashboard renders an open dead-end road instead of a circuit. Heading must close exactly
+    (it's a pure sum of signed turn angles, independent of how finely each arc is
+    discretized); position only closes to within the corner-walk's chord-vs-arc
+    discretization error, so it's checked against a generous-but-meaningful tolerance rather
+    than exact equality.
+    """
+    gen = TrackGenerator(track_class=track_class, seed=11)
+    track = gen.generate_track()
+    x, z, heading = gen._walk_end_pose(track)
+
+    heading_err_rad = ((heading + math.pi) % (2 * math.pi)) - math.pi
+    assert abs(heading_err_rad) < 1e-9, f"Heading didn't close exactly for {track_class}"
+
+    dist_from_start = math.hypot(x, z)
+    assert dist_from_start < 15.0, (
+        f"{track_class} track ended {dist_from_start:.1f} m from the start/finish line"
+    )
 
 
 @pytest.mark.parametrize("track_class", list(TRACK_CLASSES))

@@ -1,9 +1,19 @@
+/* Registering --pct as a real <number> lets the browser tween it like any other animatable
+   property. Without this, a bare custom property is treated as an opaque string -- so even
+   though .gauge-ring below declares `transition: background`, changing --pct was always
+   snapping the conic-gradient instantly instead of easing, no matter what the transition said. */
+@property --pct {
+    syntax: '<number>';
+    inherits: true;
+    initial-value: 0;
+}
+
 :root {
     --bg-color: #0b0f19;
     --panel-bg: rgba(15, 23, 42, 0.75);
     --panel-border: rgba(255, 255, 255, 0.08);
     --text-primary: #f8fafc;
-    --text-secondary: #94a3b8;
+    --text-secondary: #a8b3c7;
     --accent-main: #ff2800; /* Ferrari Red */
     --accent-orange: #f97316;
     --accent-green: #10b981;
@@ -178,6 +188,15 @@ body {
 .btn-primary:hover {
     background: #e60000;
     box-shadow: 0 0 20px rgba(255, 40, 0, 0.6);
+}
+
+.btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+.btn:disabled:hover {
+    background: rgba(255, 255, 255, 0.1);
 }
 
 .btn-secondary {
@@ -375,10 +394,13 @@ input[type=range]::-webkit-slider-runnable-track {
     padding: 12px;
     border-radius: 8px;
     text-align: center;
-    font-family: 'Orbitron', sans-serif;
+    /* Rajdhani, not Orbitron: this box can hold long phrases like "INFEASIBLE - MAX
+       CONSERVATION", and Orbitron's tight geometric letterforms get hard to read fast at that
+       length -- Orbitron reads fine for short single words/numbers but not full phrases. */
+    font-family: 'Rajdhani', sans-serif;
     font-weight: 700;
-    font-size: 16px;
-    letter-spacing: 2px;
+    font-size: 17px;
+    letter-spacing: 1px;
     margin-bottom: 16px;
     border-left: 4px solid var(--text-secondary);
 }
@@ -419,10 +441,10 @@ input[type=range]::-webkit-slider-runnable-track {
     padding: 10px;
     border-radius: 6px;
     text-align: center;
-    font-family: 'Orbitron', sans-serif;
+    font-family: 'Rajdhani', sans-serif;
     font-weight: 700;
-    font-size: 11px;
-    letter-spacing: 1px;
+    font-size: 13px;
+    letter-spacing: 0.5px;
     background: rgba(16, 185, 129, 0.15);
     color: var(--accent-green);
     border: 1px solid rgba(16, 185, 129, 0.3);
@@ -432,4 +454,613 @@ input[type=range]::-webkit-slider-runnable-track {
     flex-grow: 1;
     min-height: 200px;
     margin-top: 10px;
+}
+
+/* --- Status Pill --- */
+.status-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--panel-border);
+    font-family: 'Orbitron', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: var(--text-secondary);
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-secondary);
+    transition: background 0.3s, box-shadow 0.3s;
+}
+
+.status-pill.live .status-dot {
+    background: var(--accent-green);
+    box-shadow: 0 0 8px var(--accent-green);
+    animation: pulse-dot 1.4s ease-in-out infinite;
+}
+.status-pill.live { color: var(--accent-green); }
+
+.status-pill.paused .status-dot {
+    background: var(--accent-orange);
+    box-shadow: 0 0 8px var(--accent-orange);
+}
+.status-pill.paused { color: var(--accent-orange); }
+
+.status-pill.finished .status-dot {
+    background: #38bdf8;
+    box-shadow: 0 0 8px #38bdf8;
+}
+.status-pill.finished { color: #38bdf8; }
+
+.status-pill.error .status-dot { background: var(--accent-red); }
+.status-pill.error { color: var(--accent-red); }
+
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.55; transform: scale(0.85); }
+}
+
+/* --- Race Setup --- */
+.setup-section {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.field-label {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+}
+
+.full-select {
+    width: 100%;
+}
+
+.seed-row {
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.seed-readout {
+    font-family: 'Rajdhani', monospace;
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--accent-main);
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 6px;
+    padding: 6px 10px;
+    min-width: 90px;
+}
+
+.seed-row .btn-icon {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+.setup-hint {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    margin: 0;
+    opacity: 0.75;
+}
+
+/* --- Gauges --- */
+.gauge-grid {
+    display: flex;
+    justify-content: space-around;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.gauge-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.gauge-ring {
+    --pct: 0;
+    width: 108px;
+    height: 108px;
+    border-radius: 50%;
+    background: conic-gradient(var(--accent-main) calc(var(--pct) * 1%), rgba(255,255,255,0.08) 0);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* No CSS transition here on purpose: app.js now recomputes --pct every animation frame by
+       interpolating between telemetry ticks (see renderTelemetryFrame()), so the value passed
+       in is already smooth. A CSS transition on top of an already-smoothly-moving target would
+       make the dial chase a moving goalpost and feel laggy/rubbery instead of crisp. */
+}
+
+.gauge-ring-soc {
+    background: conic-gradient(var(--accent-green) calc(var(--pct) * 1%), rgba(255,255,255,0.08) 0);
+}
+
+.gauge-ring-soc.gauge-low {
+    background: conic-gradient(var(--accent-red) calc(var(--pct) * 1%), rgba(255,255,255,0.08) 0);
+}
+
+.gauge-inner {
+    width: 84px;
+    height: 84px;
+    border-radius: 50%;
+    background: #0d1220;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    box-shadow: inset 0 0 12px rgba(0,0,0,0.6);
+}
+
+.gauge-value {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 22px;
+    font-weight: 700;
+    color: white;
+    line-height: 1.1;
+}
+
+.gauge-unit {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 9px;
+    color: var(--text-secondary);
+    letter-spacing: 1px;
+    margin-top: 2px;
+}
+
+.gauge-label {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: var(--text-secondary);
+}
+
+/* --- Power flow bar --- */
+.power-flow-bar {
+    margin: 4px 0 20px 0;
+}
+
+.power-flow-track {
+    position: relative;
+    height: 10px;
+    border-radius: 5px;
+    background: rgba(0, 0, 0, 0.35);
+    overflow: hidden;
+}
+
+.power-flow-zero {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: rgba(255,255,255,0.25);
+}
+
+.power-flow-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 0%;
+    background: var(--accent-orange);
+    /* Same reasoning as .gauge-ring above: app.js drives width/left from an already-smoothed,
+       per-frame-interpolated value now, so a CSS transition here would double-smooth. */
+    transition: background 0.2s ease-out;
+    border-radius: 5px;
+}
+
+.power-flow-fill.regen {
+    background: var(--accent-green);
+}
+
+.power-flow-labels {
+    display: flex;
+    justify-content: space-between;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 9px;
+    letter-spacing: 1px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+/* --- Lap times --- */
+.lap-times-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 180px;
+    overflow-y: auto;
+    flex-shrink: 0;
+    min-height: 60px;
+}
+
+.lap-times-empty {
+    font-size: 13px;
+    color: var(--text-secondary);
+    text-align: center;
+    padding: 16px 0;
+    opacity: 0.7;
+}
+
+.lap-time-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 7px 12px;
+    background: rgba(0,0,0,0.2);
+    border-radius: 6px;
+    font-size: 14px;
+    animation: lap-row-in 0.3s ease-out;
+}
+
+.lap-time-row .lap-num {
+    color: var(--text-secondary);
+    font-family: 'Orbitron', sans-serif;
+    font-size: 11px;
+}
+
+.lap-time-row .lap-time {
+    font-family: 'Rajdhani', monospace;
+    font-weight: 700;
+}
+
+.lap-time-row.best-lap {
+    background: rgba(16, 185, 129, 0.12);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.lap-time-row.best-lap .lap-time {
+    color: var(--accent-green);
+}
+
+@keyframes lap-row-in {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* --- Minimap --- */
+.minimap-panel {
+    /* .viewport is a full-bleed absolutely-positioned backdrop behind the grid of floating
+       sidebars (so the 3D canvas can fill the whole screen), which means `right` here is
+       measured from the true screen edge, not clear of .sidebar-right's 380px + the grid's
+       24px gap + the page's 24px padding. Offset past all three so this doesn't render
+       underneath the sidebar. */
+    position: absolute;
+    bottom: 30px;
+    right: 428px;
+    width: 220px;
+    height: 220px;
+    padding: 12px;
+    z-index: 10;
+    pointer-events: none;
+    transition: right 0.4s ease;
+}
+
+body.sidebar-right-collapsed .minimap-panel {
+    right: 30px;
+}
+
+.minimap-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+#minimap-svg {
+    width: 100%;
+    height: calc(100% - 20px);
+}
+
+.minimap-track {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.35);
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.minimap-car {
+    fill: var(--accent-main);
+    filter: drop-shadow(0 0 3px var(--accent-main));
+}
+
+.minimap-start {
+    fill: var(--accent-green);
+}
+
+/* --- Camera hint --- */
+.camera-hint-text {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 11px;
+    color: var(--text-secondary);
+    letter-spacing: 0.5px;
+    padding-left: 12px;
+    border-left: 1px solid var(--panel-border);
+    margin-left: 4px;
+    white-space: nowrap;
+}
+
+/* --- Toasts --- */
+.toast-container {
+    position: absolute;
+    top: 100px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 20;
+    pointer-events: none;
+    align-items: center;
+}
+
+.toast {
+    pointer-events: auto;
+    background: rgba(15, 23, 42, 0.9);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--panel-border);
+    border-left: 3px solid var(--accent-main);
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-primary);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    animation: toast-in 0.3s ease-out, toast-out 0.4s ease-in 2.6s forwards;
+    white-space: nowrap;
+}
+
+.toast.toast-good { border-left-color: var(--accent-green); }
+.toast.toast-warn { border-left-color: var(--accent-orange); }
+.toast.toast-info { border-left-color: #38bdf8; }
+
+@keyframes toast-in {
+    from { opacity: 0; transform: translateY(-12px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+@keyframes toast-out {
+    to { opacity: 0; transform: translateY(-12px); }
+}
+
+/* --- Finish overlay --- */
+.finish-overlay {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(5, 8, 15, 0.6);
+    backdrop-filter: blur(4px);
+    z-index: 30;
+    pointer-events: none;
+}
+
+.finish-overlay.visible {
+    display: flex;
+    pointer-events: auto;
+}
+
+.finish-card {
+    width: 420px;
+    padding: 32px;
+    text-align: center;
+    animation: finish-pop 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes finish-pop {
+    from { opacity: 0; transform: scale(0.92); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+.finish-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 24px;
+    font-weight: 900;
+    letter-spacing: 3px;
+    color: var(--accent-main);
+    text-shadow: 0 0 20px rgba(255, 40, 0, 0.5);
+}
+
+.finish-subtitle {
+    color: var(--text-secondary);
+    font-size: 14px;
+    margin-top: 6px;
+    margin-bottom: 24px;
+}
+
+.finish-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.finish-stat {
+    background: rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.finish-stat .label {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 9px;
+    color: var(--text-secondary);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+.finish-stat .value {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 22px;
+    font-weight: 700;
+    color: white;
+}
+
+.finish-stat .value small {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.finish-actions-breakdown {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+    margin-bottom: 24px;
+}
+
+.finish-action-chip {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    padding: 5px 10px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: var(--text-secondary);
+}
+
+.finish-close {
+    width: 100%;
+}
+
+/* --- Overtake Panel --- */
+.overtake-panel {
+    background: rgba(249, 115, 22, 0.1);
+    border: 1px solid var(--accent-orange);
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 12px;
+    animation: pulse-border 2s infinite;
+}
+
+.overtake-panel.risk-high {
+    background: rgba(255, 40, 0, 0.1);
+    border-color: var(--accent-red);
+    animation: pulse-border-red 2s infinite;
+}
+
+.overtake-panel.risk-low {
+    background: rgba(16, 185, 129, 0.1);
+    border-color: var(--accent-green);
+    animation: pulse-border-green 2s infinite;
+}
+
+.overtake-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #fff;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+}
+
+@keyframes pulse-border {
+    0% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.4); }
+    70% { box-shadow: 0 0 0 10px rgba(249, 115, 22, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0); }
+}
+
+@keyframes pulse-border-red {
+    0% { box-shadow: 0 0 0 0 rgba(255, 40, 0, 0.4); }
+    70% { box-shadow: 0 0 0 10px rgba(255, 40, 0, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(255, 40, 0, 0); }
+}
+
+@keyframes pulse-border-green {
+    0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+    70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+/* --- Toggle Switch --- */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 20px;
+}
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute; cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(255,255,255,0.1);
+  transition: .4s;
+}
+.slider:before {
+  position: absolute; content: "";
+  height: 14px; width: 14px; left: 3px; bottom: 3px;
+  background-color: var(--text-primary);
+  transition: .4s;
+}
+input:checked + .slider {
+  background-color: var(--accent-orange);
+}
+input:checked + .slider:before {
+  transform: translateX(14px);
+}
+.slider.round { border-radius: 20px; }
+.slider.round:before { border-radius: 50%; }
+
+/* --- Event Timeline --- */
+.timeline-container {
+    background: rgba(0,0,0,0.2);
+    border-radius: 6px;
+    padding: 10px;
+    height: 150px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.timeline-empty {
+    font-size: 12px;
+    color: var(--text-secondary);
+    text-align: center;
+    margin-top: 10px;
+}
+.timeline-event {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-primary);
+    padding-left: 10px;
+    border-left: 2px solid var(--accent-orange);
+    animation: lap-row-in 0.3s ease-out;
 }
