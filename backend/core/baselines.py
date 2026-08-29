@@ -4,6 +4,19 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.regulation_config import DEPLOYMENT_CURVE, MAX_MGU_K_REGEN_POWER_KW
 
+# [Fix] PRD Section 16.4 lists "SOC(t_finish) >= R_base" as a *hard* constraint -- not
+# something only the proposed system/Oracle has to respect while comparison baselines get a
+# pass. These baselines previously stopped only at soc_mj > 0.0 (Baselines 0-2), letting them
+# drain the battery straight through that safety floor -- which is exactly what let a baseline
+# that takes on illegitimate finish risk occasionally clock a faster raw time than the Oracle
+# (which correctly reserves R_base), making that "Oracle beaten by a simpler baseline" result
+# look like an optimizer bug when it was actually an unfair comparison: two policies playing
+# by different rules. Matches Forecaster.get_strategic_reserve's R_base (core/forecaster.py) so
+# every policy in the baseline hierarchy -- Oracle, the online MPC, and these baselines alike --
+# is held to the same finish-with-reserve requirement, which is what makes "% of Oracle
+# performance" (PRD Section 18/24) a meaningful, apples-to-apples metric.
+RESERVE_FLOOR_MJ = 0.5
+
 def get_max_deploy_power(velocity_kmh: float) -> float:
     """Interpolate max deployment power from the regulatory curve based on speed."""
     if velocity_kmh <= DEPLOYMENT_CURVE[0]["speed_kmh"]:
@@ -39,8 +52,8 @@ class Baseline0_NoOptimization(BaselinePolicy):
         # Simplified: if we are over the upcoming corner speed, we should brake/regen.
         # However, baselines need a simple heuristic for when to regen.
         # Let's say if we aren't deploying, we are regenerating.
-        # But for Baseline 0, we just deploy if we have SOC.
-        if simulator_state.battery.soc_mj > 0.1:
+        # But for Baseline 0, we just deploy if we have SOC above the hard reserve floor.
+        if simulator_state.battery.soc_mj > RESERVE_FLOOR_MJ:
             return (max_deploy, 0.0)
         else:
             return (0.0, max_regen)
@@ -58,7 +71,10 @@ class Baseline1_Aggressive(BaselinePolicy):
         # walled off the ICE for the rest of the run (see core/simulator.py's ICE gate).
         # This baseline has no corner-approach awareness, so it should coast (not brake)
         # when it isn't deploying; the corner-speed cap already enforces safety physically.
-        if simulator_state.battery.soc_mj > 0.0:
+        # "Aggressive" means ignoring the *strategic* reserve headroom the online MPC would
+        # otherwise hold back for uncertainty -- not ignoring the hard finish-with-reserve
+        # floor every policy must respect (see RESERVE_FLOOR_MJ above).
+        if simulator_state.battery.soc_mj > RESERVE_FLOOR_MJ:
             return (max_deploy, 0.0)
         return (0.0, 0.0)
 
@@ -73,7 +89,7 @@ class Baseline2_Conservative(BaselinePolicy):
         v_kmh = simulator_state.velocity_m_s * 3.6
         max_deploy = get_max_deploy_power(v_kmh) * self.cap_fraction
 
-        if simulator_state.battery.soc_mj > 0.0:
+        if simulator_state.battery.soc_mj > RESERVE_FLOOR_MJ:
             return (max_deploy, 0.0)
         return (0.0, 0.0)
 
@@ -93,7 +109,7 @@ class Baseline3_FixedHeuristic(BaselinePolicy):
         max_deploy = get_max_deploy_power(v_kmh)
 
         # If we have budget, deploy a conservative amount, else coast (see Baseline1's fix note)
-        if simulator_state.battery.soc_mj > 0.5:
+        if simulator_state.battery.soc_mj > RESERVE_FLOOR_MJ:
             return (max_deploy * 0.7, 0.0)
         return (0.0, 0.0)
 

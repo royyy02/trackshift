@@ -49,12 +49,36 @@ def test_regeneration_physical_limit():
     """
     sim = Simulator()
     sim.velocity_m_s = 10.0 # low speed, low kinetic energy
-    
+
     ke_mj = 0.5 * sim.vehicle.mass * (sim.velocity_m_s ** 2) / 1000000.0
-    
+
     # Request massive regen
     initial_regen = sim.cumulative_e_regen_mj
     sim.step(1.0, requested_power_kw=0.0, requested_regen_kw=50000.0)
     regen_step = sim.cumulative_e_regen_mj - initial_regen
-    
+
     assert regen_step <= ke_mj, "Regenerated more energy than physically available!"
+
+
+def test_regeneration_respects_regulatory_power_cap():
+    """
+    Regen must also never exceed MAX_MGU_K_REGEN_POWER_KW, independently of the kinetic-energy
+    bound above -- at high speed a car can carry far more kinetic energy than the regulatory
+    MGU-K regen power cap would allow recovering in a single step, so this needs its own
+    high-speed case to actually exercise the power cap rather than the kinetic-energy one.
+    """
+    sim = Simulator()
+    sim.velocity_m_s = 90.0  # high speed -> kinetic energy bound is not the binding constraint
+
+    dt_s = 1.0
+    regen_cap_mj = MAX_MGU_K_REGEN_POWER_KW * 0.001 * dt_s
+    ke_mj = 0.5 * sim.vehicle.mass * (sim.velocity_m_s ** 2) / 1000000.0
+    assert regen_cap_mj < ke_mj, "test setup invalid: power cap should be the binding constraint"
+
+    initial_regen = sim.cumulative_e_regen_mj
+    sim.step(dt_s, requested_power_kw=0.0, requested_regen_kw=MAX_MGU_K_REGEN_POWER_KW * 10)
+    regen_step = sim.cumulative_e_regen_mj - initial_regen
+
+    assert regen_step <= regen_cap_mj + 1e-9, (
+        "Regenerated more energy than the regulatory MGU-K power cap allows in one step!"
+    )

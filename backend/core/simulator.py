@@ -1,11 +1,27 @@
 import sys
 import os
+import math
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.vehicle_model import VehicleModel
 from core.battery_model import BatteryModel
 from core.track_generator import TrackGenerator, total_length_m
-from config.vehicle_config import ICE_POWER_KW
+import config.vehicle_config as vehicle_config
+
+# [Fix] Simulator.step() previously applied one Euler update per caller-requested dt_s directly
+# -- every call site in this codebase uses dt_s=1.0s, which is coarse relative to how fast this
+# vehicle model's own dynamics move: at low speed under full traction (mu_longitudinal * g),
+# net acceleration is on the order of 50+ m/s^2, so a single 1.0s Euler step from a standing
+# start could jump velocity by ~54 m/s in one shot despite the true (nonlinear, power-limited)
+# curve rising much more gradually -- and the corner-speed/safety-car clamps, track-position
+# update, and regen bounds were all only re-evaluated once per full second rather than as the
+# car actually moved through the interval. step() now subdivides internally into substeps of at
+# most this length; the public dt_s contract (advance by exactly dt_s, same cumulative-energy
+# accounting) is unchanged, this only makes what happens *within* that interval more accurate.
+# 0.1s balances that accuracy gain against cost: it's a 10x increase in step() 's internal work,
+# which is still cheap (no per-step allocations or heavy math) relative to what the optimizer's
+# own clone-and-simulate calls already do per solve.
+MAX_SUBSTEP_S = 0.1
 
 class Simulator:
     """
@@ -147,7 +163,53 @@ class Simulator:
 
     def step(self, dt_s: float, requested_power_kw: float, requested_regen_kw: float):
         """
-        Simulate a single time step.
+        Simulate a time step of length dt_s -- internally subdivided into substeps of at most
+        MAX_SUBSTEP_S for numerical accuracy (see MAX_SUBSTEP_S's comment), while the external
+        contract (advance by exactly dt_s, same cumulative-energy accounting) is unchanged.
+        """
+        if dt_s <= 0:
+            return
+        n_substeps = max(1, math.ceil(dt_s / MAX_SUBSTEP_S))
+        sub_dt_s = dt_s / n_substeps
+
+        # [Fix, history] This flag has been through three designs:
+        #
+        # 1. Gate on actual_regen_mj (whether regen is *actually* extracting energy right now),
+        #    re-evaluated every substep. Broke the moment substeps existed: once a substep fully
+        #    drained the car's kinetic energy mid-macro-step, the *next* substep saw zero KE,
+        #    concluded "not braking," and re-enabled the ICE -- which generated fresh KE for the
+        #    substep after *that* to harvest all over again. An energy-generating oscillation
+        #    within a single sustained regen request.
+        #
+        # 2. Gate on the raw request alone (requested_regen_kw > 0), decided once per macro-step,
+        #    with no velocity check. Fixes #1, but creates a worse failure: Baseline0's
+        #    depleted-battery fallback (baselines.py) requests regen indefinitely, forever, once
+        #    SOC crosses the reserve floor. With no velocity check, once the car coasts to a
+        #    stop under that sustained request, the ICE never gets a chance to re-engage again --
+        #    the car stalls at v=0 permanently and the race never finishes (confirmed empirically:
+        #    a Balanced/seed=7 race hit the 20000-step cap still stuck at distance 0).
+        #
+        # 3. Gate on the request AND current velocity (> 0), decided once per macro-step. Some
+        #    real corner-approach braking that happens to reach exactly v=0 while the caller is
+        #    still requesting regen (rare -- most corner limits aren't 0, so the caller's own
+        #    braking-distance check in optimizer.py naturally stops requesting regen before the
+        #    car fully stops) will still see the same oscillation as #1, one macro-step at a
+        #    time instead of one substep at a time -- but critically, each oscillation cycle
+        #    still covers real distance (confirmed: a synthetic sustained-full-stop-regen test
+        #    kept advancing rather than freezing), so it can never hang a race. Between "loses a
+        #    little energy to an occasional resume/re-brake cycle in a rare edge case" and "the
+        #    race doesn't finish," this is the only one of the three that's actually safe to run
+        #    unattended (e.g. the dashboard's background baseline comparison races).
+        suppress_ice = requested_regen_kw > 0.0 and self.velocity_m_s > 0.0
+        for _ in range(n_substeps):
+            self._substep(sub_dt_s, requested_power_kw, requested_regen_kw, suppress_ice)
+
+    def _substep(self, dt_s: float, requested_power_kw: float, requested_regen_kw: float,
+                 suppress_ice: bool):
+        """
+        The single-substep physics update -- `dt_s` here is one substep's length (see step()
+        above), not the length the caller originally requested. `suppress_ice` is decided once
+        per macro-step by step() (see its comment for why).
         """
         # --- Battery interaction ---
         # Convert kW to MJ/s * dt = MJ
@@ -161,7 +223,16 @@ class Simulator:
         # For simulation simplicity in MVP step, we accept requested regen if physical bounds allow.
         # Physics bound: can't regen more kinetic energy than we have
         kinetic_energy_mj = 0.5 * self.vehicle.mass * (self.velocity_m_s ** 2) / 1000000.0
-        actual_regen_mj = min(requested_regen_mj, kinetic_energy_mj)
+        # [Fix] Regen was only ever bounded by available kinetic energy, never by the
+        # regulatory MGU-K regen power cap (BatteryModel.max_regen_power_kw, sourced from
+        # regulation_config.MAX_MGU_K_REGEN_POWER_KW) -- so nothing here actually enforced that
+        # cap the way get_max_deploy_power's DEPLOYMENT_CURVE is enforced on the discharge side.
+        # No current caller happens to request more than the cap today, so this wasn't an
+        # active bug, but the simulator is meant to be the authoritative physics executor (the
+        # same role it already plays for the deploy-side cap and the corner-speed clamp) rather
+        # than something that only stays correct because every caller happens to self-limit.
+        regen_cap_mj = self.battery.max_regen_power_kw * 0.001 * dt_s
+        actual_regen_mj = min(requested_regen_mj, kinetic_energy_mj, regen_cap_mj)
 
         self.battery.update_soc(actual_discharge_mj, actual_regen_mj)
 
@@ -172,26 +243,37 @@ class Simulator:
         # Actual MGU-K power delivered in W
         actual_power_w = (actual_discharge_mj * 1000000.0) / dt_s if dt_s > 0 else 0.0
 
-        # Add ICE power (only suppressed while regen is *physically* occurring, not merely
-        # requested -- gating on the request alone meant any policy that asked for regen as
-        # a "not deploying" fallback, even at near-zero speed where no energy can actually be
-        # recaptured, silently lost its 400 kW ICE for the rest of the run)
-        ice_power_w = (ICE_POWER_KW * 1000.0) if actual_regen_mj <= 0.0 else 0.0
+        # Add ICE power (suppressed for the whole macro-step -- see step()'s comment for the
+        # `suppress_ice` decision and its history)
+        ice_power_w = 0.0 if suppress_ice else (vehicle_config.ICE_POWER_KW * 1000.0)
         total_propulsion_w = actual_power_w + ice_power_w
 
         net_a = self.vehicle.get_net_acceleration(self.velocity_m_s, total_propulsion_w)
 
-        # Braking / Regen deceleration
-        if actual_regen_mj > 0:
-            regen_power_w = (actual_regen_mj * 1000000.0) / dt_s if dt_s > 0 else 0.0
-            # Force = Power / Velocity
-            brake_force = regen_power_w / max(1.0, self.velocity_m_s)
-            regen_a = - (brake_force / self.vehicle.mass)
-            net_a += regen_a
-
-        # Update state
+        # Update state (propulsion/drag only -- regen is applied separately below via direct
+        # energy conservation, not folded into this acceleration).
         self.velocity_m_s += net_a * dt_s
         self.velocity_m_s = max(0.0, self.velocity_m_s)
+
+        # [Fix] Regen deceleration used to be computed independently from `actual_regen_mj` --
+        # as a braking *force* (regen_power_w / v), converted to a deceleration and integrated
+        # like any other acceleration term. That's a second, separate calculation of how much
+        # kinetic energy gets removed, and nothing tied it back to actually equal
+        # `actual_regen_mj` (the amount already credited to the battery, capped above by the
+        # car's *total* available kinetic energy). For a single dt_s=1.0s step the two
+        # approximately lined up in the common case and this went unnoticed; subdividing step()
+        # into finer substeps (see MAX_SUBSTEP_S) exposed it directly: each substep re-checked
+        # "is there still enough total KE?" against a velocity that the force-based calculation
+        # hadn't actually reduced by the previously-credited amount, so a heavy sustained regen
+        # request could get *re-credited* substep after substep and total more energy than the
+        # car ever had -- caught by test_regeneration_physical_limit once substeps made it
+        # observable. Removing exactly `actual_regen_mj` of kinetic energy directly (rather than
+        # deriving a deceleration and hoping it happens to remove the same amount) makes regen
+        # energy-conserving by construction, independent of how finely the step is subdivided.
+        if actual_regen_mj > 0:
+            current_ke_mj = 0.5 * self.vehicle.mass * (self.velocity_m_s ** 2) / 1_000_000.0
+            new_ke_mj = max(0.0, current_ke_mj - actual_regen_mj)
+            self.velocity_m_s = math.sqrt(2.0 * new_ke_mj * 1_000_000.0 / self.vehicle.mass)
 
         self._update_track_position()
         if self.track:

@@ -36,15 +36,20 @@ class OracleOptimizer(MPCOptimizer):
 
     def _solve_full_race(self, simulator_state, dt_s: float):
         remaining_m = simulator_state.distance_remaining_m
-        nominal_speed_m_s = max(10.0, simulator_state.velocity_m_s or 60.0)
-        horizon_steps = max(1, min(MAX_ORACLE_HORIZON_STEPS, int(remaining_m / (nominal_speed_m_s * dt_s))))
+        horizon_steps = self.estimate_horizon_steps(simulator_state, dt_s, MAX_ORACLE_HORIZON_STEPS)
 
         # Oracle has full future knowledge, i.e. zero forecast uncertainty.
         e_req, _sig_e = self.forecaster.predict_energy_required(remaining_m)
         r_safety = self.forecaster.get_strategic_reserve(e_req, 0.0)
 
-        self._solved_sequence = self._solve_sequence(
-            horizon_steps, self.max_deploy_power_kw, simulator_state.battery.soc_mj,
+        # See MPCOptimizer._solve_deployment_plan / _max_useful_deploy_kw: across a full lap
+        # there are many traction-/corner-capped moments (not just the initial launch from a
+        # dead stop) where deployment would be partly or entirely wasted -- this caps each step
+        # at how much is actually useful there (refined against the plan's own trajectory over
+        # a few passes) so the budget lands on speed gains across the whole race, not
+        # concentrated into the first acceleration zone.
+        self._solved_sequence = self._solve_deployment_plan(
+            simulator_state, horizon_steps, self.max_deploy_power_kw, simulator_state.battery.soc_mj,
             e_req, r_safety, dt_s,
         )
         self._solved_index = 0

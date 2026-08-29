@@ -3,204 +3,442 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TrackShift Energy Intelligence</title>
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+    <title>TrackShift BMS</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='7' fill='%23ff2800'/%3E%3Cpath d='M18 4 L9 18 H15 L13 28 L24 13 H17 L18 4 Z' fill='%23ffffff'/%3E%3C/svg%3E">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
-    
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.0/umd/index.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 </head>
 <body>
-    <div class="app-layout">
-        
-        <header class="glass-panel main-header">
-            <div class="header-left">
-                <button class="btn btn-icon" onclick="toggleSidebar('left')" title="Toggle Tuning Panel">☰</button>
-                <div class="logo">
-                    <span class="highlight">TRACK</span>SHIFT <span class="badge">INTELLIGENCE</span>
-                </div>
-                <div class="status-pill" id="status-pill">
-                    <span class="status-dot"></span>
-                    <span id="status-pill-text">CONNECTING</span>
-                </div>
-            </div>
-            <div class="playback-controls">
-                <button id="btn-start" onclick="startRace()" class="btn btn-primary" disabled>START</button>
-                <button id="btn-pause" onclick="pauseRace()" class="btn btn-secondary">PAUSE</button>
-                <button id="btn-reset" onclick="resetRace()" class="btn btn-secondary">RESET</button>
-                <div class="select-wrapper">
-                    <select id="speed-select" title="Playback speed multiplier">
-                        <option value="0.25">0.25x SPEED</option>
-                        <option value="0.5">0.50x SPEED</option>
-                        <option value="1" selected>1.00x SPEED</option>
-                        <option value="2">2.00x SPEED</option>
-                        <option value="5">5.00x SPEED</option>
-                        <option value="10">10.0x SPEED</option>
-                    </select>
-                </div>
-                <button class="btn btn-icon" onclick="toggleSidebar('right')" title="Toggle Telemetry Panel">☰</button>
-            </div>
-        </header>
 
-        <!-- Left Sidebar: Tuning & Environment -->
-        <aside class="sidebar-left glass-panel">
-            <div class="mode-toggle" style="display: flex; align-items: center; background: rgba(0,0,0,0.2); padding: 8px 12px; border-radius: 6px; margin-bottom: 16px;">
-                <label class="toggle-switch">
-                    <input type="checkbox" id="fleet-toggle" onchange="toggleFleetMode()">
-                    <span class="slider round"></span>
-                </label>
-                <span id="mode-label" style="font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--text-primary); margin-left: 12px; margin-top: 2px;">F1 MOTORSPORT</span>
-            </div>
-            <h2>RACE SETUP</h2>
-            <div class="setup-section">
-                <div class="field-group">
-                    <label class="field-label">Track Character</label>
-                    <select id="track-class-select" class="full-select">
-                        <option value="Balanced" selected>Balanced</option>
-                        <option value="High-speed">High-Speed</option>
-                        <option value="Technical">Technical</option>
-                        <option value="Heavy-braking">Heavy-Braking</option>
-                        <option value="Energy-intensive">Energy-Intensive</option>
-                        <option value="Energy-recovery-heavy">Energy-Recovery-Heavy</option>
-                    </select>
-                </div>
-                <div class="field-group">
-                    <label class="field-label">Race Distance</label>
-                    <select id="laps-select" class="full-select">
-                        <option value="1">1 Lap (Sprint)</option>
-                        <option value="3">3 Laps</option>
-                        <option value="5" selected>5 Laps</option>
-                        <option value="10">10 Laps</option>
-                    </select>
-                </div>
-                <div class="field-group seed-row">
-                    <div>
-                        <label class="field-label">Seed</label>
-                        <div class="seed-readout" id="seed-readout">random</div>
+    <!-- Full-bleed 3D viewport, sits behind everything else -->
+    <main class="viewport">
+        <div id="track-container"></div>
+
+        <div class="camera-controls glass-panel">
+            <select id="camera-mode-select">
+                <option value="chase">CHASE CAM</option>
+                <option value="orbit" selected>ORBIT CAM</option>
+                <option value="free">FREE ROAM</option>
+            </select>
+            <span id="camera-hint" class="camera-hint-text"></span>
+        </div>
+    </main>
+
+    <!-- Full-screen overlays live as top-level siblings, not nested inside .viewport --
+         .viewport has its own z-index (0), which creates its own stacking context, so a
+         z-index set on a descendant only ever competes with *other descendants* of .viewport,
+         never with true siblings like .main-header/.dock/.right-dock. Nested here, an overlay
+         big enough to spatially reach where the header or docks sit would render *underneath*
+         them regardless of how high its own z-index is set -- true for the finish-race and
+         toast overlays too (they were already structured this way, just never large/positioned
+         enough for the bug to be visually obvious), not only the larger docs overlay below. -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <div class="finish-overlay" id="finish-overlay">
+            <div class="finish-card glass-panel">
+                <div class="finish-title">RACE COMPLETE</div>
+                <div class="finish-subtitle" id="finish-track-label">Balanced &middot; 5 laps</div>
+                <div class="finish-stats-grid">
+                    <div class="finish-stat">
+                        <span class="label">Total Time</span>
+                        <span class="value" id="finish-time">0:00.00</span>
                     </div>
-                    <button class="btn btn-icon" onclick="randomizeSeed()" title="New random track seed">🎲</button>
-                </div>
-                <p class="setup-hint">Changes apply on the next START (or RESET then START to re-roll mid-race).</p>
-            </div>
-
-            <h2 class="mt-4">PHYSICS TUNING</h2>
-            <div class="tuning-section">
-                <div class="slider-group">
-                    <div class="slider-header">
-                        <label>Vehicle Mass</label>
-                        <span class="slider-val"><span id="val-mass">798</span> kg</span>
+                    <div class="finish-stat">
+                        <span class="label">Best Lap</span>
+                        <span class="value" id="finish-best-lap">--</span>
                     </div>
-                    <input type="range" id="tune-mass" min="700" max="900" value="798" step="1">
-                </div>
-                <div class="slider-group">
-                    <div class="slider-header">
-                        <label>Downforce (ClA)</label>
-                        <span class="slider-val"><span id="val-cla">4.50</span></span>
+                    <div class="finish-stat">
+                        <span class="label">Avg Speed</span>
+                        <span class="value" id="finish-avg-speed">0 <small>KM/H</small></span>
                     </div>
-                    <input type="range" id="tune-cla" min="1.0" max="8.0" value="4.5" step="0.1">
-                </div>
-                <div class="slider-group">
-                    <div class="slider-header">
-                        <label>Battery Capacity</label>
-                        <span class="slider-val"><span id="val-cap">4.00</span> MJ</span>
+                    <div class="finish-stat">
+                        <span class="label">Final SOC</span>
+                        <span class="value" id="finish-soc">0.00 <small>MJ</small></span>
                     </div>
-                    <input type="range" id="tune-cap" min="2.0" max="6.0" value="4.0" step="0.1">
+                </div>
+                <div class="finish-actions-breakdown" id="finish-actions"></div>
+
+                <div class="baseline-comparison" id="baseline-comparison">
+                    <div class="baseline-comparison-title">Performance vs. Baselines</div>
+                    <table class="baseline-table">
+                        <thead>
+                            <tr>
+                                <th>Strategy</th>
+                                <th>Total Time</th>
+                                <th>Delta vs Oracle</th>
+                            </tr>
+                        </thead>
+                        <tbody id="baseline-table-body">
+                            <tr>
+                                <td colspan="3" class="baseline-table-empty">Computing baseline metrics...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <button class="btn btn-primary finish-close" onclick="closeFinishOverlay()">NEW RACE</button>
+            </div>
+        </div>
+
+        <div class="docs-overlay" id="docs-overlay">
+            <div class="docs-card glass-panel">
+                <div class="docs-header">
+                    <div class="docs-header-text">
+                        <div class="docs-title">How TrackShift BMS Works</div>
+                        <div class="docs-subtitle">The physics, math, and decision logic behind every number on this dashboard.</div>
+                    </div>
+                    <button class="btn btn-icon" onclick="closeDocs()" title="Close">
+                        <svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    </button>
+                </div>
+
+                <div class="docs-body">
+
+                    <section class="doc-section">
+                        <h3>1. Vehicle Model — Reduced-Order Point Mass</h3>
+                        <p>The car is modeled as a point mass with no heading or 2D position during the race itself (only distance travelled along the track) — a deliberate simplification that keeps the simulation fast enough to run hundreds of what-if races (baselines, Oracle, Monte Carlo) in well under a second.</p>
+
+                        <div class="doc-formula">
+                            F<sub>drag</sub> = 0.5 · ρ · C<sub>d</sub>A · v²<br>
+                            F<sub>downforce</sub> = 0.5 · ρ · C<sub>l</sub>A · v²<br>
+                            F<sub>roll</sub> = C<sub>rr</sub> · (m·g + F<sub>downforce</sub>)
+                        </div>
+                        <p>Standard drag/downforce equations. Rolling resistance scales with total normal force — vehicle weight <em>plus</em> aerodynamic downforce pressing the tires into the track, so a high-downforce setup also rolls with more resistance.</p>
+
+                        <div class="doc-formula">
+                            F<sub>traction_max</sub> = μ<sub>long</sub> · (m·g + F<sub>downforce</sub>)<br>
+                            F<sub>drive</sub> = min( P<sub>available</sub> / v, F<sub>traction_max</sub> )<br>
+                            a = (F<sub>drive</sub> − F<sub>drag</sub> − F<sub>roll</sub>) / m
+                        </div>
+                        <p>Drive force is capped by whichever is smaller: how much force the requested power can produce at the current speed (P/v), or how much force the tires can physically put down before losing grip. This is why raw power alone can't accelerate a stationary car instantly — at v→0, P/v is enormous but gets clamped hard by the traction ceiling.</p>
+
+                        <div class="doc-formula">
+                            v<sub>corner_max</sub> = √&#8288; ( (μ<sub>lat</sub>·m·g) / (m/r − μ<sub>lat</sub>·0.5·ρ·C<sub>l</sub>A) )
+                        </div>
+                        <p>Cornering speed limit, derived from balancing lateral tire grip (weight <em>plus</em> downforce-assisted) against the centripetal force a corner of radius <var>r</var> demands. Rain scales the effective μ down by ~20%, dropping this limit by roughly √0.64 ≈ 80% of dry-grip cornering speed.</p>
+                    </section>
+
+                    <section class="doc-section">
+                        <h3>2. Battery Model</h3>
+                        <div class="doc-formula">
+                            SOC(t+1) = SOC(t) − E<sub>discharge</sub> + η<sub>regen</sub> · E<sub>regen</sub>
+                        </div>
+                        <p>Discharge is modeled as lossless; regen applies a round-trip efficiency (90% by default) — recovering 1 MJ of kinetic energy stores 0.9 MJ. Regenerated energy is derived directly from kinetic-energy conservation (½·m·v² before vs. after), not from a separately-computed braking force — this guarantees the car's kinetic energy always drops by exactly what gets credited to the battery, regardless of how finely a time step is subdivided internally.</p>
+                        <p>Both discharge power and regen power are capped by the regulatory deployment curve and MGU-K regen limit respectively; SOC is always clamped to <code>[0, capacity]</code>.</p>
+                    </section>
+
+                    <section class="doc-section">
+                        <h3>3. Energy Forecaster</h3>
+                        <p>Predicts how much energy (Ê) is still needed to finish the race, with an explicit uncertainty band (σ<sub>Ê</sub>):</p>
+                        <ul class="doc-list">
+                            <li><strong>First ~100m of a race</strong> — no telemetry history yet, so this falls back to a physics-based prior: expected drag + rolling-resistance rate, net of a typical per-meter regen credit.</li>
+                            <li><strong>After ~100m</strong> — blends the cumulative net-energy rate observed so far (for stability) with how much the <em>recent</em> rate has been diverging from it (for uncertainty) — a sudden change in driving conditions (rain, traffic, a technical section) widens σ<sub>Ê</sub> immediately.</li>
+                        </ul>
+                        <p>Both branches are floored at zero — a physically valid energy requirement can never be negative, i.e. the car can never be predicted to net <em>gain</em> energy over the remaining race.</p>
+
+                        <div class="doc-formula">
+                            R<sub>safety</sub>(t) = R<sub>base</sub> + k · σ<sub>Ê</sub>(t) + R<sub>event</sub>(t)
+                        </div>
+                        <p>The strategic reserve every policy holds back before it's willing to spend battery. <var>R_base</var> = 0.5 MJ is a fixed floor; <var>k</var> = 2.0 (≈95% confidence under a normal-distribution assumption) scales the uncertainty term; <var>R_event</var> adds live-disturbance contingency — +0.15 MJ while a safety car is active (pace resumes unpredictably once it ends), +0.10 MJ in the rain (noisier lap-to-lap consumption), +0.05 MJ under limited-power mode (a lower ceiling makes any shortfall harder to recover from). This is the <em>same</em> formula the Oracle, the live MPC, and every baseline policy are held to — the whole "% of Oracle performance" comparison only means something if everyone plays by the same reserve rule.</p>
+                    </section>
+
+                    <section class="doc-section">
+                        <h3>4. Proposed System — Receding-Horizon MPC</h3>
+                        <p>The live strategy driving the car each tick. Re-solves a short lookahead (5 steps) every single time step, rather than committing to a fixed plan — reacting immediately to rain, safety cars, or a corner appearing sooner than expected.</p>
+                        <ul class="doc-list">
+                            <li><strong>Corner-approach braking</strong> — before every step it checks the next corner: if within braking distance (<code>(v² − v_limit²) / (2·a_brake_max)</code>, plus a safety margin) of needing to slow down, it requests full regen instead of running the optimizer at all.</li>
+                            <li><strong>Deployable check</strong> — <code>Deployable = SOC − Ê − R_safety</code>. Once this drops to zero, deployment is forced off entirely (hard conservation) rather than gradually tapered.</li>
+                            <li><strong>Water-filling allocation</strong> — otherwise, the energy budget available over the horizon is spread as <em>evenly</em> as possible across every step, except where a step's own usefulness ceiling is lower (see below) — in which case that step is pinned at its ceiling and the freed-up budget is redistributed across the remaining steps. This converges in at most <var>horizon_steps</var> passes and always uses the full available budget.</li>
+                            <li><strong>Usefulness ceiling</strong> — deploying more power than a step can actually turn into speed is pure waste. Each step's ceiling accounts for traction headroom above what the ICE alone already demands, whether the car is already at its current segment's corner-speed cap, and whether it's approaching a corner it would just get clamped at anyway.</li>
+                        </ul>
+                        <p class="doc-note">Why not just deploy everything as early as possible? Because F = P/v means the speed benefit of extra power <em>shrinks</em> as speed rises — a big early burst reaches a high peak speed briefly then leaves nothing for the rest of the lap, while the same energy spread across the whole race raises cruising speed the entire way. Measured head-to-head with identical total energy, the spread allocation finished a lap several seconds faster than front-loading.</p>
+                    </section>
+
+                    <section class="doc-section">
+                        <h3>5. Oracle — Theoretical Best</h3>
+                        <p>Not a controller — a single <em>offline</em> solve over the entire remaining race with zero forecast uncertainty (perfect future knowledge), computed once and replayed. Uses the exact same water-filling allocator as the live MPC, just over the whole race horizon instead of a 5-step window, which is what makes it a meaningful ceiling to measure the MPC against rather than a different algorithm entirely.</p>
+                    </section>
+
+                    <section class="doc-section">
+                        <h3>6. Baseline Policies</h3>
+                        <p>Four deliberately simple strategies the Proposed System and Oracle are benchmarked against — every one of them still respects the same 0.5 MJ hard reserve floor, so the comparison is apples-to-apples:</p>
+                        <ul class="doc-list">
+                            <li><strong>Baseline 0 — No Optimization:</strong> full deployment until the reserve floor, then switches to full regen.</li>
+                            <li><strong>Baseline 1 — Aggressive:</strong> full deployment whenever above the hard floor, ignoring the <em>strategic</em> reserve headroom a cautious policy would hold back.</li>
+                            <li><strong>Baseline 2 — Conservative:</strong> capped at a fixed fraction (default 60%) of max deployment power at all times.</li>
+                            <li><strong>Baseline 3 — Fixed Heuristic:</strong> a flat 70% of max deployment power, a simple "set it and forget it" schedule.</li>
+                        </ul>
+                    </section>
+
+                    <section class="doc-section">
+                        <h3>7. Procedural Track Generation</h3>
+                        <p>Each track class (Balanced, Technical, High-Speed, …) is a probability distribution over segment types — straights, high-speed/medium/slow corners, hairpins — sampled until the target length is reached. Two things keep the result meaningful rather than arbitrary:</p>
+                        <ul class="doc-list">
+                            <li><strong>Feasibility check</strong> — the candidate lap is walked once assuming the vehicle brakes as late as physically possible into every corner; any track where a corner can't be reached from the previous segment's achievable speed within the available braking distance is rejected and resampled.</li>
+                            <li><strong>Closed-loop closure</strong> — a real return path (two same-direction corners plus a connecting straight, solved as a restricted Dubins path) bends the track from wherever the random walk ends back to the exact start/finish pose, so the circuit the 3D view and minimap draw is an actual closed loop, not a cosmetic line connecting two open ends.</li>
+                        </ul>
+                    </section>
+
+                    <section class="doc-section">
+                        <h3>8. Simulation Engine</h3>
+                        <p>Each simulated time step (1 second of race time by default) is internally subdivided into substeps of at most 0.1s before the Euler-integration update is applied — the vehicle's own dynamics move fast enough (50+ m/s² under full traction near a standing start) that a single 1-second jump would be a crude approximation of the true curve. This is purely an internal accuracy improvement; a caller requesting a 1-second step still gets exactly 1 second of advanced race time and identical cumulative-energy accounting.</p>
+                        <p>Every race step follows the same loop: the active policy (MPC / Oracle / a baseline) decides a deploy/regen request → the simulator advances the physics → the result (speed, SOC, lap, strategy state) streams to this dashboard over a websocket, at whatever playback-speed multiplier is selected.</p>
+                    </section>
+
+                    <section class="doc-section">
+                        <h3>9. Overtake Opportunity Assessment</h3>
+                        <p>On straights longer than 400m, evaluates the energy cost of a hypothetical +15 km/h overtaking burst (drag/rolling-resistance power over the burst distance, plus a fixed MGU-K override cost) against currently deployable energy, and classifies the risk as <strong>LOW</strong> (attack), <strong>MARGINAL</strong> (driver discretion), or <strong>HIGH</strong> (hold) accordingly.</p>
+                    </section>
+
                 </div>
             </div>
+        </div>
 
-            <h2 class="mt-4">ENVIRONMENT</h2>
-            <div class="disturbances">
-                <button id="btn-rain" onclick="injectRain()" class="btn btn-toggle">TOGGLE RAIN</button>
-                <button id="btn-sc" onclick="injectSC()" class="btn btn-toggle">SAFETY CAR</button>
-                <button id="btn-power" onclick="injectPower()" class="btn btn-toggle">MGU-K FAILURE</button>
+    <!-- Header bar -->
+    <header class="glass-panel main-header">
+        <div class="header-left">
+            <button class="btn btn-icon" onclick="toggleDock()" title="Toggle control dock">
+                <svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+            </button>
+            <div class="logo">
+                <svg class="brand-logo" width="26" height="26" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                    <rect x="1" y="1" width="30" height="30" rx="7" fill="#ff2800"></rect>
+                    <path d="M18 4 L9 18 H15 L13 28 L24 13 H17 L18 4 Z" fill="#ffffff"></path>
+                </svg>
+                <span class="logo-text"><span class="highlight">TRACK</span>SHIFT <span class="logo-suffix">BMS</span></span>
             </div>
-            
-            <div class="status-flags mt-4">
-                <div id="flag-rain" class="flag">RAIN</div>
-                <div id="flag-sc" class="flag">SAFETY CAR</div>
-                <div id="flag-power" class="flag">PWR LIMIT</div>
+            <div class="mode-indicator" id="mode-indicator">
+                <span class="mode-indicator-dot"></span>
+                <span id="mode-indicator-text">F1 MOTORSPORT</span>
             </div>
-            
-            <h2 class="mt-4">EVENT TIMELINE</h2>
-            <div id="timeline-container" class="timeline-container">
-                <div class="timeline-empty">No events yet</div>
+            <div class="status-pill" id="status-pill">
+                <span class="status-dot"></span>
+                <span id="status-pill-text">CONNECTING</span>
             </div>
-        </aside>
-
-        <!-- Center: 3D View -->
-        <main class="viewport">
-            <div id="track-container"></div>
-
-            <div class="minimap-panel glass-panel">
-                <div class="minimap-title">TRACK MAP</div>
-                <svg id="minimap-svg" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid meet"></svg>
-            </div>
-
-            <div class="camera-controls glass-panel">
-                <select id="camera-mode-select">
-                    <option value="chase" selected>CHASE CAM</option>
-                    <option value="orbit">ORBIT CAM</option>
-                    <option value="free">FREE ROAM</option>
+        </div>
+        <div class="playback-controls">
+            <button id="btn-start" onclick="startRace()" class="btn btn-primary btn-with-icon" disabled title="Start race">
+                <svg class="icon" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                <span>START</span>
+            </button>
+            <button id="btn-pause" onclick="pauseRace()" class="btn btn-secondary btn-with-icon" title="Pause / resume race">
+                <span class="btn-icon-svg" id="btn-pause-icon"><svg class="icon" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg></span>
+                <span id="btn-pause-label">PAUSE</span>
+            </button>
+            <button id="btn-reset" onclick="resetRace()" class="btn btn-secondary btn-with-icon" title="Reset race">
+                <svg class="icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+                <span>RESET</span>
+            </button>
+            <div class="select-wrapper">
+                <select id="speed-select" title="Playback speed multiplier">
+                    <option value="0.25">0.25x SPEED</option>
+                    <option value="0.5">0.50x SPEED</option>
+                    <option value="1" selected>1.00x SPEED</option>
+                    <option value="2">2.00x SPEED</option>
+                    <option value="5">5.00x SPEED</option>
+                    <option value="10">10.0x SPEED</option>
                 </select>
-                <span id="camera-hint" class="camera-hint-text"></span>
             </div>
+            <button class="btn btn-icon" onclick="exportRacePDF()" title="Export full race report (PDF)">
+                <svg class="icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            </button>
+        </div>
+    </header>
 
-            <div class="toast-container" id="toast-container"></div>
+    <!-- Left dock: icon rail + sliding tab drawer -->
+    <div class="dock" id="dock">
+        <nav class="dock-rail">
+            <button class="dock-rail-btn" data-tab="setup" onclick="openTab('setup')" title="Race Setup">
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"></path><line x1="4" y1="22" x2="4" y2="15"></line></svg>
+            </button>
+            <button class="dock-rail-btn" data-tab="tuning" onclick="openTab('tuning')" title="Physics Tuning">
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>
+            </button>
+            <button class="dock-rail-btn" data-tab="environment" onclick="openTab('environment')" title="Environment">
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="16" y1="13" x2="16" y2="21"></line><line x1="8" y1="13" x2="8" y2="21"></line><line x1="12" y1="15" x2="12" y2="23"></line><path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"></path></svg>
+            </button>
+            <button class="dock-rail-btn" data-tab="strategy" onclick="openTab('strategy')" title="MPC Strategy">
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
+            </button>
+            <button class="dock-rail-btn" data-tab="laps" onclick="openTab('laps')" title="Lap Times">
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            </button>
+            <button class="dock-rail-btn" data-tab="energy" onclick="openTab('energy')" title="Energy Prediction">
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg>
+            </button>
+            <button class="dock-rail-btn" onclick="openDocs()" title="How It Works — Math &amp; Physics Reference">
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+            </button>
+        </nav>
 
-            <div class="finish-overlay" id="finish-overlay">
-                <div class="finish-card glass-panel">
-                    <div class="finish-title">RACE COMPLETE</div>
-                    <div class="finish-subtitle" id="finish-track-label">Balanced &middot; 5 laps</div>
-                    <div class="finish-stats-grid">
-                        <div class="finish-stat">
-                            <span class="label">Total Time</span>
-                            <span class="value" id="finish-time">0:00.00</span>
-                        </div>
-                        <div class="finish-stat">
-                            <span class="label">Best Lap</span>
-                            <span class="value" id="finish-best-lap">--</span>
-                        </div>
-                        <div class="finish-stat">
-                            <span class="label">Avg Speed</span>
-                            <span class="value" id="finish-avg-speed">0 <small>KM/H</small></span>
-                        </div>
-                        <div class="finish-stat">
-                            <span class="label">Final SOC</span>
-                            <span class="value" id="finish-soc">0.00 <small>MJ</small></span>
-                        </div>
+        <div class="dock-drawer" id="dock-drawer">
+            <!-- Setup -->
+            <section class="tab-panel" data-tab="setup">
+                <h2>Race Setup</h2>
+                <div class="mode-switch-bar">
+                    <div class="mode-switch-text">
+                        <span class="mode-switch-title">DOMAIN</span>
+                        <span class="mode-switch-value" id="mode-label">F1 MOTORSPORT</span>
                     </div>
-                    <div class="finish-actions-breakdown" id="finish-actions"></div>
-                    
-                    <!-- Performance Comparison Panel -->
-                    <div class="baseline-comparison" id="baseline-comparison" style="margin: 20px 0; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 12px; background: rgba(0,0,0,0.3);">
-                        <div style="font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--text-secondary); margin-bottom: 10px; text-transform: uppercase;">Performance vs. Baselines</div>
-                        <table style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left;">
-                            <thead>
-                                <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); color: var(--text-secondary);">
-                                    <th style="padding-bottom: 6px;">Strategy</th>
-                                    <th style="padding-bottom: 6px;">Total Time</th>
-                                    <th style="padding-bottom: 6px;">Delta vs Oracle</th>
-                                </tr>
-                            </thead>
-                            <tbody id="baseline-table-body">
-                                <tr>
-                                    <td colspan="3" style="padding-top: 10px; text-align: center; color: var(--text-secondary); font-style: italic;">Computing baseline metrics...</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <button class="btn btn-primary finish-close" onclick="closeFinishOverlay()">NEW RACE</button>
+                    <label class="toggle-switch" title="Switch between F1 and EV delivery-fleet configurations">
+                        <input type="checkbox" id="fleet-toggle" onchange="toggleFleetMode()">
+                        <span class="slider round"></span>
+                    </label>
                 </div>
-            </div>
-        </main>
+                <div class="setup-section">
+                    <div class="field-group">
+                        <label class="field-label">Track Character</label>
+                        <select id="track-class-select" class="full-select">
+                            <option value="Balanced" selected>Balanced</option>
+                            <option value="High-speed">High-Speed</option>
+                            <option value="Technical">Technical</option>
+                            <option value="Heavy-braking">Heavy-Braking</option>
+                            <option value="Energy-intensive">Energy-Intensive</option>
+                            <option value="Energy-recovery-heavy">Energy-Recovery-Heavy</option>
+                        </select>
+                    </div>
+                    <div class="field-group">
+                        <label class="field-label">Race Distance</label>
+                        <select id="laps-select" class="full-select">
+                            <option value="1">1 Lap (Sprint)</option>
+                            <option value="3">3 Laps</option>
+                            <option value="5" selected>5 Laps</option>
+                            <option value="10">10 Laps</option>
+                        </select>
+                    </div>
+                    <div class="field-group seed-row">
+                        <div>
+                            <label class="field-label">Seed</label>
+                            <div class="seed-readout" id="seed-readout">random</div>
+                        </div>
+                        <button class="btn btn-icon" onclick="randomizeSeed()" title="New random track seed">
+                            <svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"></polyline><line x1="4" y1="20" x2="21" y2="3"></line><polyline points="21 16 21 21 16 21"></polyline><line x1="15" y1="15" x2="21" y2="21"></line><line x1="4" y1="4" x2="9" y2="9"></line></svg>
+                        </button>
+                    </div>
+                    <p class="setup-hint">Changes apply on the next START (or RESET then START to re-roll mid-race).</p>
+                </div>
+            </section>
 
-        <!-- Right Sidebar: Telemetry & Strategy -->
-        <aside class="sidebar-right glass-panel">
-            <h2>LIVE TELEMETRY</h2>
+            <!-- Tuning -->
+            <section class="tab-panel" data-tab="tuning">
+                <h2>Physics Tuning</h2>
+                <div class="tuning-section">
+                    <div class="slider-group">
+                        <div class="slider-header">
+                            <label>Vehicle Mass</label>
+                            <span class="slider-val"><input type="number" id="val-mass" class="tune-input" value="798" min="700" max="900" step="1"> kg</span>
+                        </div>
+                        <input type="range" id="tune-mass" min="700" max="900" value="798" step="1">
+                    </div>
+                    <div class="slider-group">
+                        <div class="slider-header">
+                            <label>Downforce (ClA)</label>
+                            <span class="slider-val"><input type="number" id="val-cla" class="tune-input" value="4.50" min="1.0" max="8.0" step="0.1"></span>
+                        </div>
+                        <input type="range" id="tune-cla" min="1.0" max="8.0" value="4.5" step="0.1">
+                    </div>
+                    <div class="slider-group">
+                        <div class="slider-header">
+                            <label>Battery Capacity</label>
+                            <span class="slider-val"><input type="number" id="val-cap" class="tune-input" value="4.00" min="2.0" max="6.0" step="0.1"> MJ</span>
+                        </div>
+                        <input type="range" id="tune-cap" min="2.0" max="6.0" value="4.0" step="0.1">
+                    </div>
+                </div>
+            </section>
+
+            <!-- Environment -->
+            <section class="tab-panel" data-tab="environment">
+                <h2>Environment</h2>
+                <div class="disturbances">
+                    <button id="btn-rain" onclick="injectRain()" class="btn btn-toggle">TOGGLE RAIN</button>
+                    <button id="btn-sc" onclick="injectSC()" class="btn btn-toggle">SAFETY CAR</button>
+                    <button id="btn-power" onclick="injectPower()" class="btn btn-toggle">MGU-K FAILURE</button>
+                </div>
+                <h2 class="mt-4">Event Timeline</h2>
+                <div id="timeline-container" class="timeline-container">
+                    <div class="timeline-empty">No events yet</div>
+                </div>
+            </section>
+
+            <!-- Strategy -->
+            <section class="tab-panel" data-tab="strategy">
+                <h2>MPC Strategy</h2>
+                <div class="strategy-readout">
+                    <div class="action-box" id="val-action">WAITING</div>
+                    <div class="metric-list">
+                        <div class="metric-row">
+                            <span>Energy to Finish (Ê):</span>
+                            <span><span id="val-ereq">0.00</span> MJ</span>
+                        </div>
+                        <div class="metric-row">
+                            <span>Uncertainty (σ):</span>
+                            <span>±<span id="val-sige">0.00</span> MJ</span>
+                        </div>
+                        <div class="metric-row">
+                            <span>Required Reserve:</span>
+                            <span><span id="val-rsafety">0.00</span> MJ</span>
+                        </div>
+                        <div class="metric-row highlight-row">
+                            <span>Deployable:</span>
+                            <span><span id="val-deployable">0.00</span> MJ</span>
+                        </div>
+                    </div>
+                    <div class="robustness-box" id="val-robustness">
+                        ROBUSTNESS: HIGH (SAFE)
+                    </div>
+                </div>
+
+                <div id="overtake-panel" class="overtake-panel" style="display: none;">
+                    <div class="overtake-title">
+                        <svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                        OVERTAKE WINDOW
+                    </div>
+                    <div class="metric-list">
+                        <div class="metric-row">
+                            <span>Expected Reward:</span>
+                            <span class="highlight-text">-<span id="overtake-reward">0.00</span> s</span>
+                        </div>
+                        <div class="metric-row">
+                            <span>Physical Cost:</span>
+                            <span><span id="overtake-cost">0.00</span> MJ</span>
+                        </div>
+                    </div>
+                    <div class="robustness-box" id="overtake-risk">
+                        RISK: EVALUATING...
+                    </div>
+                </div>
+            </section>
+
+            <!-- Laps -->
+            <section class="tab-panel" data-tab="laps">
+                <h2>Lap Times</h2>
+                <div class="lap-times-list" id="lap-times-list">
+                    <div class="lap-times-empty">No laps completed yet</div>
+                </div>
+            </section>
+
+            <!-- Energy -->
+            <section class="tab-panel" data-tab="energy">
+                <h2>Energy Prediction</h2>
+                <div class="chart-container">
+                    <canvas id="energyChart"></canvas>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- Always-visible floating telemetry HUD + track map, stacked in one aligned column -->
+    <div class="right-dock">
+        <aside class="hud-panel glass-panel">
             <div class="gauge-grid">
                 <div class="gauge-box">
                     <div class="gauge-ring" id="gauge-speed" style="--pct:0">
@@ -238,60 +476,12 @@
                 </div>
                 <div class="power-flow-labels"><span>REGEN</span><span>DEPLOY</span></div>
             </div>
-
-            <h2 class="mt-4">MPC STRATEGY</h2>
-            <div class="strategy-readout">
-                <div class="action-box" id="val-action">WAITING</div>
-                <div class="metric-list">
-                    <div class="metric-row">
-                        <span>Predicted Finish:</span>
-                        <span><span id="val-ereq">0.00</span> MJ</span>
-                    </div>
-                    <div class="metric-row">
-                        <span>Uncertainty (σ):</span>
-                        <span>±<span id="val-sige">0.00</span> MJ</span>
-                    </div>
-                    <div class="metric-row">
-                        <span>Required Reserve:</span>
-                        <span><span id="val-rsafety">0.00</span> MJ</span>
-                    </div>
-                    <div class="metric-row highlight-row">
-                        <span>Deployable:</span>
-                        <span><span id="val-deployable">0.00</span> MJ</span>
-                    </div>
-                </div>
-                <div class="robustness-box" id="val-robustness">
-                    ROBUSTNESS: HIGH (SAFE)
-                </div>
-            </div>
-            
-            <div id="overtake-panel" class="overtake-panel" style="display: none;">
-                <div class="overtake-title">⚡ OVERTAKE WINDOW</div>
-                <div class="metric-list">
-                    <div class="metric-row">
-                        <span>Expected Reward:</span>
-                        <span class="highlight-text">-<span id="overtake-reward">0.00</span> s</span>
-                    </div>
-                    <div class="metric-row">
-                        <span>Physical Cost:</span>
-                        <span><span id="overtake-cost">0.00</span> MJ</span>
-                    </div>
-                </div>
-                <div class="robustness-box" id="overtake-risk">
-                    RISK: EVALUATING...
-                </div>
-            </div>
-            
-            <h2 class="mt-4">LAP TIMES</h2>
-            <div class="lap-times-list" id="lap-times-list">
-                <div class="lap-times-empty">No laps completed yet</div>
-            </div>
-
-            <h2 class="mt-4">ENERGY PREDICTION</h2>
-            <div class="chart-container">
-                <canvas id="energyChart"></canvas>
-            </div>
         </aside>
+
+        <div class="minimap-panel glass-panel">
+            <div class="minimap-title">TRACK MAP</div>
+            <svg id="minimap-svg" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid meet"></svg>
+        </div>
     </div>
 
     <script src="/static/app.js"></script>

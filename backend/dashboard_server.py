@@ -14,6 +14,13 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from core.simulator import Simulator
 from core.forecaster import Forecaster
 from core.optimizer import MPCOptimizer
+from core.oracle import OracleOptimizer
+from core.baselines import (
+    Baseline0_NoOptimization,
+    Baseline1_Aggressive,
+    Baseline2_Conservative,
+    Baseline3_FixedHeuristic,
+)
 from core.track_generator import TRACK_CLASSES
 
 app = FastAPI()
@@ -29,6 +36,47 @@ async def root():
     return FileResponse(os.path.join(static_dir, "index.html"))
 
 BASE_TICK_INTERVAL_S = 0.1  # wall-clock delay between telemetry messages at 1x speed
+
+# Policy factories for the finish-screen baseline comparison. "Proposed (MPC)" is deliberately
+# excluded -- it's exactly the race that was just run live, so its real result is already
+# known (self.sim.time_s) and re-simulating it would just reproduce the same number for the
+# cost of another full solve.
+BASELINE_POLICY_FACTORIES = {
+    "Baseline 0 (No Optimization)": lambda sim, forecaster: Baseline0_NoOptimization(),
+    "Aggressive Baseline": lambda sim, forecaster: Baseline1_Aggressive(),
+    "Conservative Baseline": lambda sim, forecaster: Baseline2_Conservative(0.6),
+    "Fixed Heuristic": lambda sim, forecaster: Baseline3_FixedHeuristic(),
+    "Oracle (Perfect Future Knowledge)": lambda sim, forecaster: OracleOptimizer(sim, forecaster),
+}
+
+
+def _run_baseline_race(policy_factory, track_class: str, seed: int, laps: int) -> float:
+    """
+    Runs one full baseline/Oracle race under the same track/seed/laps as the race that was
+    just displayed live, and returns its total time. This mirrors scripts/run_monte_carlo.py's
+    run_simulation() -- reused here instead of imported since that script's version prints
+    progress and isn't structured as a return-a-single-number helper.
+
+    Deliberately does NOT replay whatever rain/safety-car/MGU-K-failure the user triggered
+    live: those are interactive and not reproducible from (track_class, seed, laps) alone, so
+    this is a clean-conditions comparison against the same circuit -- which is what the
+    frontend's "Performance vs. Baselines" panel labels it as, not a disturbance-for-
+    disturbance replay of the exact live run.
+    """
+    sim = Simulator()
+    sim.load_track(track_class=track_class, laps=laps, seed=seed)
+    forecaster = Forecaster(sim)
+    policy = policy_factory(sim, forecaster)
+
+    max_steps = 20000  # generous upper bound; a real race finishes in a few hundred steps
+    steps = 0
+    while steps < max_steps and not sim.is_finished:
+        deploy_kw, regen_kw = policy.get_action(sim)
+        sim.step(1.0, deploy_kw, regen_kw)
+        steps += 1
+
+    return sim.time_s
+
 
 class RaceRunner:
     def __init__(self):
@@ -70,6 +118,16 @@ class RaceRunner:
                 "radius": segment.radius_m if segment.radius_m != float('inf') else -1,
                 "direction": segment.direction,
             })
+        # The dashboard's speed/power gauges need to know what "full scale" means, and that's
+        # mode-dependent -- an EV delivery vehicle's ~45 km/h / ~5 kW range would render as an
+        # invisible sliver on gauges scaled for an F1 car's 380 km/h / 350 kW. Reading the
+        # currently-active regulation config here (rather than hard-coding F1 numbers into the
+        # frontend, as it previously did) keeps the gauges correct for whichever mode is live,
+        # the same way soc_capacity_mj already does for the SOC gauge.
+        import config.regulation_config as regulation_config
+        max_speed_kmh = regulation_config.DEPLOYMENT_CURVE[-1]["speed_kmh"]
+        max_power_kw = max(point["power_kw"] for point in regulation_config.DEPLOYMENT_CURVE)
+
         try:
             await websocket.send_json({
                 "type": "track_geometry",
@@ -78,6 +136,8 @@ class RaceRunner:
                 "seed": seed,
                 "laps_total": self.sim.laps_total,
                 "lap_length_m": self.sim.lap_length_m,
+                "max_speed_kmh": max_speed_kmh,
+                "max_power_kw": max_power_kw,
             })
         except Exception:
             pass
@@ -177,12 +237,25 @@ class RaceRunner:
                     "avg_speed_kmh": avg_speed_kmh,
                     "action_counts": self.action_counts,
                     "track_class": self.track_class,
-                    "baselines": [
-                        {"name": "Oracle (Perfect Future Knowledge)", "time_s": self.sim.time_s * 0.992},
-                        {"name": "Proposed System (MPC)", "time_s": self.sim.time_s},
-                        {"name": "Aggressive Baseline", "time_s": self.sim.time_s * 1.035},
-                        {"name": "Fixed Heuristic", "time_s": self.sim.time_s * 1.051}
-                    ]
+                })
+            except Exception:
+                pass
+
+            # Real baseline/Oracle races (not fabricated multipliers of the live result) --
+            # run in a thread since each is a genuine physics simulation (the Oracle also
+            # solves one SLSQP problem), so this doesn't block the websocket event loop while
+            # it computes. Sent as a separate follow-up message so the main finish stats above
+            # appear immediately instead of waiting on this.
+            try:
+                baselines = [{"name": "Proposed System (MPC)", "time_s": self.sim.time_s}]
+                for name, factory in BASELINE_POLICY_FACTORIES.items():
+                    time_s = await asyncio.to_thread(
+                        _run_baseline_race, factory, self.track_class, self.seed, self.sim.laps_total
+                    )
+                    baselines.append({"name": name, "time_s": time_s})
+                await websocket.send_json({
+                    "type": "baseline_results",
+                    "baselines": baselines,
                 })
             except Exception:
                 pass
@@ -249,11 +322,16 @@ async def websocket_endpoint(websocket: WebSocket):
                     rc.MAX_MGU_K_DEPLOY_POWER_KW = 5.0
                     rc.MAX_MGU_K_REGEN_POWER_KW = 2.0
                 else:
-                    # Restore F1 defaults
+                    # Restore F1 defaults -- must match config/vehicle_config.py's actual
+                    # module-level values. [Fix] CDA/CLA here were 1.0/4.5, not the real
+                    # defaults (0.95/2.5) -- so toggling to Fleet mode and back permanently
+                    # left the "F1" car's aero parameters wrong (until server restart) for the
+                    # rest of the session, off by ~5% drag and ~80% downforce from the
+                    # documented config values.
                     vc.VEHICLE_MASS_KG = 800
                     vc.ICE_POWER_KW = 400.0
-                    vc.CDA = 1.0
-                    vc.CLA = 4.5
+                    vc.CDA = 0.95
+                    vc.CLA = 2.5
                     vc.PEAK_LATERAL_ACCELERATION_G = 5.0
                     vc.PEAK_LONGITUDINAL_DECELERATION_G = 5.5
                     rc.DEPLOYMENT_CURVE = [

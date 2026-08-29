@@ -10,14 +10,25 @@
 
 :root {
     --bg-color: #0b0f19;
-    --panel-bg: rgba(15, 23, 42, 0.75);
+    --panel-bg: rgba(15, 23, 42, 0.78);
     --panel-border: rgba(255, 255, 255, 0.08);
     --text-primary: #f8fafc;
-    --text-secondary: #a8b3c7;
+    --text-secondary: #94a3b8;
     --accent-main: #ff2800; /* Ferrari Red */
     --accent-orange: #f97316;
     --accent-green: #10b981;
     --accent-red: #ff2800;
+
+    --font-display: 'Space Grotesk', sans-serif;
+    --font-body: 'Inter', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+
+    /* Kept in sync with the header's real rendered height by a ResizeObserver in app.js -- the
+       header wraps onto a second line on narrow viewports (see .main-header below), so its
+       height isn't a constant, and every other fixed-position panel (.dock, .right-dock) anchors
+       itself below the header using this variable instead of a hardcoded top offset. The literal
+       64px here is only the pre-JS fallback for the first paint. */
+    --header-h: 64px;
 }
 
 * {
@@ -27,11 +38,11 @@
 body {
     margin: 0;
     padding: 0;
-    font-family: 'Rajdhani', sans-serif;
+    font-family: var(--font-body);
     color: var(--text-primary);
     overflow: hidden;
     background: var(--bg-color);
-    font-size: 16px;
+    font-size: 15px;
 }
 
 /* Scrollbars */
@@ -49,14 +60,25 @@ body {
     background: rgba(255, 255, 255, 0.3);
 }
 
-/* 3D Viewport is absolute and covers the whole screen */
+/* ==========================================================================
+   3D Viewport -- full-bleed backdrop behind every floating panel.
+   pointer-events must be explicitly `auto` here: it is a descendant of no
+   pointer-events-restricted ancestor, but we set it explicitly anyway since
+   this is exactly the property that silently ate every mouse/wheel/touch
+   event bound for OrbitControls in the previous grid-based layout (a
+   `pointer-events: none` ancestor made the canvas invisible to input even
+   though OrbitControls' listeners were correctly attached to it -- rotate,
+   zoom and pan all looked "dead" for a reason that had nothing to do with
+   OrbitControls itself). Keeping it explicit here guards against that
+   regression happening again if the layout changes.
+   ========================================================================== */
 .viewport {
-    position: absolute;
-    top: 0;
-    left: 0;
+    position: fixed;
+    inset: 0;
     width: 100vw;
     height: 100vh;
     z-index: 0;
+    pointer-events: auto;
 }
 
 #track-container {
@@ -64,36 +86,14 @@ body {
     height: 100%;
 }
 
-.camera-controls {
-    position: absolute;
-    bottom: 30px;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 10px 20px;
-    border-radius: 30px;
-    display: flex;
-    align-items: center;
-    pointer-events: auto;
-    z-index: 10;
+#track-container canvas {
+    display: block;
+    touch-action: none; /* let OrbitControls fully own drag/pinch gestures on touch devices */
 }
 
-/* Main UI Grid */
-.app-layout {
-    display: grid;
-    grid-template-columns: 340px 1fr 380px;
-    grid-template-rows: 70px 1fr;
-    height: 100vh;
-    width: 100vw;
-    gap: 24px;
-    padding: 24px;
-    position: absolute;
-    top: 0;
-    left: 0;
-    z-index: 10;
-    pointer-events: none; /* Let clicks pass through empty space */
-}
-
-/* Glass Panels */
+/* ==========================================================================
+   Shared glass panel look
+   ========================================================================== */
 .glass-panel {
     pointer-events: auto;
     background: var(--panel-bg);
@@ -102,81 +102,118 @@ body {
     border: 1px solid var(--panel-border);
     border-radius: 16px;
     box-shadow: 0 10px 40px rgba(0,0,0,0.5);
-    z-index: 10;
-    position: relative;
 }
 
-/* Header */
+/* ==========================================================================
+   Header
+   ========================================================================== */
 .main-header {
-    grid-column: 1 / -1;
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    right: 20px;
+    min-height: 64px;
+    z-index: 30;
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
-    padding: 0 32px;
+    row-gap: 10px;
+    column-gap: 16px;
+    padding: 12px 24px;
 }
 
 .header-left {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 16px;
+    row-gap: 8px;
+    gap: 14px;
 }
 
 .logo {
-    font-family: 'Orbitron', sans-serif;
-    font-size: 22px;
-    font-weight: 900;
-    letter-spacing: 2px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-family: var(--font-display);
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+.brand-logo {
+    flex-shrink: 0;
+    filter: drop-shadow(0 0 6px rgba(255, 40, 0, 0.35));
 }
 
 .logo .highlight {
     color: var(--accent-main);
 }
 
-.logo .badge {
-    background: rgba(255, 40, 0, 0.15);
-    color: var(--accent-main);
-    font-family: 'Rajdhani', sans-serif;
-    font-size: 12px;
+.logo-suffix {
+    font-size: 0.56em;
     font-weight: 700;
-    padding: 3px 8px;
-    border-radius: 4px;
-    margin-left: 10px;
-    vertical-align: middle;
+    color: var(--text-secondary);
+    letter-spacing: 1.5px;
+    margin-left: 1px;
 }
 
 .playback-controls {
     display: flex;
-    gap: 12px;
+    flex-wrap: wrap;
+    row-gap: 8px;
+    gap: 10px;
     align-items: center;
 }
 
-/* Buttons */
+/* ==========================================================================
+   Buttons & inputs
+   ========================================================================== */
 .btn {
-    font-family: 'Orbitron', sans-serif;
-    font-weight: 700;
+    font-family: var(--font-display);
+    font-weight: 600;
     font-size: 12px;
-    padding: 10px 20px;
+    padding: 10px 18px;
     border-radius: 8px;
     border: none;
     cursor: pointer;
     text-transform: uppercase;
-    letter-spacing: 1px;
+    letter-spacing: 0.5px;
     transition: all 0.2s;
 }
 
 .btn-icon {
     padding: 10px;
     width: 40px;
-    background: rgba(255, 255, 255, 0.1);
+    height: 40px;
+    background: rgba(255, 255, 255, 0.08);
     color: var(--text-primary);
-    font-size: 16px;
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
 }
 
 .btn-icon:hover {
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.18);
+}
+
+/* Inline SVGs default to an inline-baseline box with a few px of descender gap beneath them --
+   `display: block` inside a flex-centered button removes that so the icon actually sits dead
+   center instead of looking a couple pixels high. */
+.icon {
+    display: block;
+}
+
+.btn-with-icon {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.btn-icon-svg {
+    display: flex;
+    align-items: center;
 }
 
 .btn-primary {
@@ -214,6 +251,7 @@ body {
     color: var(--text-secondary);
     width: 100%;
     margin-bottom: 8px;
+    transition: background 0.25s, border-color 0.25s, color 0.25s;
 }
 
 .btn-toggle:hover {
@@ -221,61 +259,265 @@ body {
     color: white;
 }
 
+/* Pressing a disturbance button highlights the button itself -- it doubles as the status
+   indicator now, so there's no separate always-visible "flag" row underneath duplicating the
+   same information and eating vertical space in the tab. */
+.btn-toggle.active-rain { background: rgba(56, 189, 248, 0.18); border-color: #38bdf8; color: #38bdf8; }
+.btn-toggle.active-sc { background: rgba(250, 204, 21, 0.18); border-color: #facc15; color: #facc15; }
+.btn-toggle.active-power { background: rgba(248, 113, 113, 0.18); border-color: #f87171; color: #f87171; }
+
 select {
     background: rgba(0, 0, 0, 0.3);
     color: white;
     border: 1px solid rgba(255,255,255,0.2);
     padding: 8px 12px;
     border-radius: 6px;
-    font-family: 'Rajdhani', sans-serif;
+    font-family: var(--font-body);
     font-weight: 600;
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     outline: none;
 }
 
-/* Sidebars */
-.sidebar-left {
-    grid-column: 1 / 2;
-    grid-row: 2 / 3;
-    padding: 24px;
-    display: flex;
-    flex-direction: column;
-    overflow-y: auto;
-    overflow-x: hidden;
-    transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.4s ease;
+/* ==========================================================================
+   Custom dropdowns -- app.js's enhanceSelect() moves the real <select> in
+   here (visually hidden, still the live source of truth for its value/change
+   event) and renders this glass-panel-styled trigger + option list next to
+   it, so dropdowns match the rest of the UI instead of the browser default.
+   ========================================================================== */
+.sr-select {
+    position: absolute !important;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
 }
 
-.sidebar-right {
-    grid-column: 3 / 4;
-    grid-row: 2 / 3;
-    padding: 24px;
-    display: flex;
-    flex-direction: column;
-    overflow-y: auto;
-    overflow-x: hidden;
-    transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.4s ease;
+.custom-select {
+    position: relative;
+    display: inline-block;
 }
 
-.sidebar-left.collapsed {
+.custom-select-full {
+    display: block;
+    width: 100%;
+}
+
+.custom-select-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    background: rgba(0, 0, 0, 0.3);
+    color: var(--text-primary);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-family: var(--font-body);
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color 0.2s, background 0.2s;
+}
+
+.custom-select-full .custom-select-trigger {
+    width: 100%;
+}
+
+.custom-select-trigger:hover {
+    border-color: rgba(255, 255, 255, 0.32);
+    background: rgba(0, 0, 0, 0.4);
+}
+
+.custom-select.open .custom-select-trigger {
+    border-color: var(--accent-main);
+}
+
+.custom-select-trigger .icon {
+    flex-shrink: 0;
+    transition: transform 0.2s ease;
+    color: var(--text-secondary);
+}
+
+.custom-select.open .custom-select-trigger .icon {
+    transform: rotate(180deg);
+}
+
+.custom-select-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    min-width: 100%;
+    width: max-content;
+    max-width: 320px;
+    background: rgba(13, 18, 32, 0.97);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    box-shadow: 0 16px 36px rgba(0,0,0,0.55);
+    padding: 6px;
+    max-height: 280px;
+    overflow-y: auto;
+    z-index: 60;
+    opacity: 0;
+    transform: translateY(-6px);
+    pointer-events: none;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.custom-select.open .custom-select-panel {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+/* Set by app.js's openPanel() when there isn't enough room below the trigger (e.g. the
+   camera-mode dropdown pinned near the bottom of the viewport) -- opens the panel upward
+   instead of off the bottom of the screen. */
+.custom-select.drop-up .custom-select-panel {
+    top: auto;
+    bottom: calc(100% + 6px);
+    transform: translateY(6px);
+}
+
+.custom-select.drop-up.open .custom-select-panel {
+    transform: translateY(0);
+}
+
+.custom-select-option {
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-family: var(--font-body);
+    font-weight: 500;
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.custom-select-option:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+}
+
+.custom-select-option.selected {
+    background: rgba(255, 40, 0, 0.15);
+    color: var(--accent-main);
+    font-weight: 700;
+}
+
+/* ==========================================================================
+   Left dock: icon rail + sliding tab drawer
+   ========================================================================== */
+.dock {
+    position: fixed;
+    top: calc(var(--header-h) + 36px);
+    left: 20px;
+    bottom: 20px;
+    z-index: 20;
+    display: flex;
+    align-items: flex-start;
+    pointer-events: none;
+    transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease, top 0.2s ease;
+}
+
+.dock.hidden {
     transform: translateX(-120%);
     opacity: 0;
     pointer-events: none;
 }
 
-.sidebar-right.collapsed {
-    transform: translateX(120%);
+.dock-rail {
+    pointer-events: auto;
+    width: 60px;
+    max-height: 100%;
+    background: var(--panel-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--panel-border);
+    border-radius: 16px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 12px 0;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.dock-rail-btn {
+    width: 42px;
+    height: 42px;
+    border-radius: 10px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 19px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+}
+
+.dock-rail-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+}
+
+.dock-rail-btn.active {
+    background: rgba(255, 40, 0, 0.16);
+    color: var(--accent-main);
+}
+
+.dock-drawer {
+    pointer-events: auto;
+    width: 0;
+    max-height: 100%;
+    margin-left: 0;
     opacity: 0;
-    pointer-events: none;
+    overflow: hidden;
+    background: var(--panel-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--panel-border);
+    border-radius: 16px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1), margin-left 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
+}
+
+.dock-drawer.open {
+    width: min(320px, 42vw);
+    margin-left: 12px;
+    opacity: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.tab-panel {
+    display: none;
+    padding: 22px;
+    width: min(320px, 42vw);
+}
+
+.tab-panel.active {
+    display: block;
 }
 
 h2 {
-    font-family: 'Orbitron', sans-serif;
-    font-size: 13px;
+    font-family: var(--font-display);
+    font-size: 12px;
     font-weight: 700;
     color: var(--text-secondary);
     text-transform: uppercase;
-    letter-spacing: 1.5px;
+    letter-spacing: 1.2px;
     margin: 0 0 16px 0;
     border-bottom: 1px solid var(--panel-border);
     padding-bottom: 8px;
@@ -283,7 +525,9 @@ h2 {
 
 .mt-4 { margin-top: 24px; }
 
-/* Sliders */
+/* ==========================================================================
+   Sliders
+   ========================================================================== */
 .slider-group {
     margin-bottom: 20px;
 }
@@ -291,15 +535,53 @@ h2 {
 .slider-header {
     display: flex;
     justify-content: space-between;
-    font-size: 15px;
+    font-size: 14px;
     margin-bottom: 8px;
-    font-weight: 600;
+    font-weight: 500;
 }
 
 .slider-val {
     color: var(--accent-main);
-    font-family: 'Rajdhani', sans-serif;
-    font-weight: 700;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.tune-input {
+    width: 52px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 5px;
+    color: var(--accent-main);
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 13px;
+    padding: 3px 6px;
+    text-align: right;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.tune-input:hover {
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.tune-input:focus {
+    border-color: var(--accent-main);
+}
+
+/* Hide the native number spinner arrows -- they clash with the rest of the app's flat,
+   custom-styled inputs. */
+.tune-input::-webkit-outer-spin-button,
+.tune-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.tune-input[type=number] {
+    -moz-appearance: textfield;
 }
 
 input[type=range] {
@@ -325,41 +607,42 @@ input[type=range]::-webkit-slider-runnable-track {
     border-radius: 2px;
 }
 
-/* Flags */
-.status-flags {
+/* ==========================================================================
+   Right-side floating column: telemetry HUD stacked directly above the track
+   map, sharing one width so their edges line up instead of floating as two
+   independently-sized/positioned panels.
+   ========================================================================== */
+.right-dock {
+    position: fixed;
+    top: calc(var(--header-h) + 36px);
+    right: 20px;
+    bottom: 24px;
+    z-index: 20;
+    width: min(260px, 34vw);
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 14px;
+    pointer-events: none;
+    transition: top 0.2s ease;
 }
 
-.flag {
-    padding: 8px 12px;
-    border-radius: 6px;
-    font-family: 'Orbitron', sans-serif;
-    font-size: 11px;
-    font-weight: 700;
-    text-align: center;
-    letter-spacing: 1px;
-    background: rgba(0, 0, 0, 0.5);
-    color: #475569;
-    border: 1px solid #334155;
-    transition: all 0.3s;
+.hud-panel {
+    width: 100%;
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
 }
 
-.flag.active-rain { background: rgba(56, 189, 248, 0.2); color: #38bdf8; border-color: #38bdf8; }
-.flag.active-sc { background: rgba(250, 204, 21, 0.2); color: #facc15; border-color: #facc15; }
-.flag.active-power { background: rgba(248, 113, 113, 0.2); color: #f87171; border-color: #f87171; }
-
-/* Metrics */
 .metrics-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 12px;
+    gap: 10px;
 }
 
 .metric-box {
     background: rgba(0, 0, 0, 0.3);
-    padding: 16px;
+    padding: 12px;
     border-radius: 12px;
     display: flex;
     flex-direction: column;
@@ -367,8 +650,8 @@ input[type=range]::-webkit-slider-runnable-track {
 }
 
 .metric-box .label {
-    font-family: 'Orbitron', sans-serif;
-    font-size: 10px;
+    font-family: var(--font-display);
+    font-size: 9px;
     color: var(--text-secondary);
     margin-bottom: 4px;
     text-transform: uppercase;
@@ -377,38 +660,55 @@ input[type=range]::-webkit-slider-runnable-track {
 }
 
 .metric-box .value {
-    font-family: 'Rajdhani', sans-serif;
-    font-size: 28px;
-    font-weight: 700;
+    font-family: var(--font-mono);
+    font-size: 22px;
+    font-weight: 600;
     color: white;
 }
 
 .metric-box .value small {
-    font-size: 14px;
+    font-size: 12px;
     color: var(--text-secondary);
 }
 
-/* Strategy */
+/* ==========================================================================
+   Strategy panel
+   ========================================================================== */
+/* A left-aligned instrument readout (status dot + monospace uppercase value) rather than a
+   centered rounded pill -- matches the rest of the dashboard's technical/telemetry styling
+   (status-pill, metric-box) instead of reading as a generic centered chat-bubble. */
 .action-box {
-    background: rgba(255, 255, 255, 0.05);
-    padding: 12px;
-    border-radius: 8px;
-    text-align: center;
-    /* Rajdhani, not Orbitron: this box can hold long phrases like "INFEASIBLE - MAX
-       CONSERVATION", and Orbitron's tight geometric letterforms get hard to read fast at that
-       length -- Orbitron reads fine for short single words/numbers but not full phrases. */
-    font-family: 'Rajdhani', sans-serif;
-    font-weight: 700;
-    font-size: 17px;
-    letter-spacing: 1px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 11px 14px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
     margin-bottom: 16px;
-    border-left: 4px solid var(--text-secondary);
+    border-left: 3px solid var(--text-secondary);
+    color: var(--text-secondary);
 }
 
-.action-attack { border-color: var(--accent-orange); color: var(--accent-orange); }
-.action-harvest { border-color: var(--accent-main); color: var(--accent-main); }
-.action-coast { border-color: var(--accent-green); color: var(--accent-green); }
-.action-conserve { border-color: var(--accent-red); color: var(--accent-red); }
+.action-box::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 6px currentColor;
+}
+
+.action-attack { border-left-color: var(--accent-orange); color: var(--accent-orange); }
+.action-harvest { border-left-color: var(--accent-main); color: var(--accent-main); }
+.action-coast { border-left-color: var(--accent-green); color: var(--accent-green); }
+.action-conserve { border-left-color: var(--accent-red); color: var(--accent-red); }
 
 .metric-list {
     display: flex;
@@ -419,15 +719,15 @@ input[type=range]::-webkit-slider-runnable-track {
 .metric-row {
     display: flex;
     justify-content: space-between;
-    font-size: 15px;
+    font-size: 14px;
     padding: 8px 12px;
     background: rgba(0,0,0,0.2);
     border-radius: 6px;
 }
 
 .metric-row span:last-child {
-    font-family: 'Rajdhani', sans-serif;
-    font-weight: 700;
+    font-family: var(--font-mono);
+    font-weight: 600;
     color: var(--accent-main);
 }
 
@@ -441,9 +741,9 @@ input[type=range]::-webkit-slider-runnable-track {
     padding: 10px;
     border-radius: 6px;
     text-align: center;
-    font-family: 'Rajdhani', sans-serif;
+    font-family: var(--font-display);
     font-weight: 700;
-    font-size: 13px;
+    font-size: 12px;
     letter-spacing: 0.5px;
     background: rgba(16, 185, 129, 0.15);
     color: var(--accent-green);
@@ -451,12 +751,13 @@ input[type=range]::-webkit-slider-runnable-track {
 }
 
 .chart-container {
-    flex-grow: 1;
-    min-height: 200px;
+    height: 260px;
     margin-top: 10px;
 }
 
-/* --- Status Pill --- */
+/* ==========================================================================
+   Status Pill
+   ========================================================================== */
 .status-pill {
     display: flex;
     align-items: center;
@@ -465,10 +766,10 @@ input[type=range]::-webkit-slider-runnable-track {
     border-radius: 20px;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid var(--panel-border);
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--font-display);
     font-size: 10px;
     font-weight: 700;
-    letter-spacing: 1.5px;
+    letter-spacing: 1.2px;
     color: var(--text-secondary);
 }
 
@@ -507,7 +808,9 @@ input[type=range]::-webkit-slider-runnable-track {
     50% { opacity: 0.55; transform: scale(0.85); }
 }
 
-/* --- Race Setup --- */
+/* ==========================================================================
+   Race Setup
+   ========================================================================== */
 .setup-section {
     display: flex;
     flex-direction: column;
@@ -521,7 +824,7 @@ input[type=range]::-webkit-slider-runnable-track {
 }
 
 .field-label {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--font-display);
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 1px;
@@ -541,9 +844,9 @@ input[type=range]::-webkit-slider-runnable-track {
 }
 
 .seed-readout {
-    font-family: 'Rajdhani', monospace;
-    font-weight: 700;
-    font-size: 15px;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 14px;
     color: var(--accent-main);
     background: rgba(0, 0, 0, 0.3);
     border: 1px solid rgba(255,255,255,0.1);
@@ -564,15 +867,17 @@ input[type=range]::-webkit-slider-runnable-track {
     color: var(--text-secondary);
     line-height: 1.4;
     margin: 0;
-    opacity: 0.75;
+    opacity: 0.8;
 }
 
-/* --- Gauges --- */
+/* ==========================================================================
+   Gauges
+   ========================================================================== */
 .gauge-grid {
     display: flex;
     justify-content: space-around;
-    gap: 12px;
-    margin-bottom: 16px;
+    gap: 10px;
+    margin-bottom: 14px;
 }
 
 .gauge-box {
@@ -584,8 +889,8 @@ input[type=range]::-webkit-slider-runnable-track {
 
 .gauge-ring {
     --pct: 0;
-    width: 108px;
-    height: 108px;
+    width: 92px;
+    height: 92px;
     border-radius: 50%;
     background: conic-gradient(var(--accent-main) calc(var(--pct) * 1%), rgba(255,255,255,0.08) 0);
     display: flex;
@@ -606,8 +911,8 @@ input[type=range]::-webkit-slider-runnable-track {
 }
 
 .gauge-inner {
-    width: 84px;
-    height: 84px;
+    width: 72px;
+    height: 72px;
     border-radius: 50%;
     background: #0d1220;
     display: flex;
@@ -618,32 +923,34 @@ input[type=range]::-webkit-slider-runnable-track {
 }
 
 .gauge-value {
-    font-family: 'Rajdhani', sans-serif;
-    font-size: 22px;
-    font-weight: 700;
+    font-family: var(--font-mono);
+    font-size: 19px;
+    font-weight: 600;
     color: white;
     line-height: 1.1;
 }
 
 .gauge-unit {
-    font-family: 'Orbitron', sans-serif;
-    font-size: 9px;
+    font-family: var(--font-display);
+    font-size: 8px;
     color: var(--text-secondary);
     letter-spacing: 1px;
     margin-top: 2px;
 }
 
 .gauge-label {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--font-display);
     font-size: 10px;
     font-weight: 700;
-    letter-spacing: 1.5px;
+    letter-spacing: 1.2px;
     color: var(--text-secondary);
 }
 
-/* --- Power flow bar --- */
+/* ==========================================================================
+   Power flow bar
+   ========================================================================== */
 .power-flow-bar {
-    margin: 4px 0 20px 0;
+    margin: 4px 0 4px 0;
 }
 
 .power-flow-track {
@@ -683,22 +990,20 @@ input[type=range]::-webkit-slider-runnable-track {
 .power-flow-labels {
     display: flex;
     justify-content: space-between;
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--font-display);
     font-size: 9px;
     letter-spacing: 1px;
     color: var(--text-secondary);
     margin-top: 4px;
 }
 
-/* --- Lap times --- */
+/* ==========================================================================
+   Lap times
+   ========================================================================== */
 .lap-times-list {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    max-height: 180px;
-    overflow-y: auto;
-    flex-shrink: 0;
-    min-height: 60px;
 }
 
 .lap-times-empty {
@@ -722,13 +1027,13 @@ input[type=range]::-webkit-slider-runnable-track {
 
 .lap-time-row .lap-num {
     color: var(--text-secondary);
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--font-display);
     font-size: 11px;
 }
 
 .lap-time-row .lap-time {
-    font-family: 'Rajdhani', monospace;
-    font-weight: 700;
+    font-family: var(--font-mono);
+    font-weight: 600;
 }
 
 .lap-time-row.best-lap {
@@ -745,33 +1050,23 @@ input[type=range]::-webkit-slider-runnable-track {
     to { opacity: 1; transform: translateY(0); }
 }
 
-/* --- Minimap --- */
+/* ==========================================================================
+   Minimap -- second card in .right-dock, directly below the HUD and sharing
+   its exact width so the two form one visually contiguous column.
+   ========================================================================== */
 .minimap-panel {
-    /* .viewport is a full-bleed absolutely-positioned backdrop behind the grid of floating
-       sidebars (so the 3D canvas can fill the whole screen), which means `right` here is
-       measured from the true screen edge, not clear of .sidebar-right's 380px + the grid's
-       24px gap + the page's 24px padding. Offset past all three so this doesn't render
-       underneath the sidebar. */
-    position: absolute;
-    bottom: 30px;
-    right: 428px;
-    width: 220px;
-    height: 220px;
+    width: 100%;
+    flex: 1 1 auto;
+    min-height: 180px;
     padding: 12px;
-    z-index: 10;
     pointer-events: none;
-    transition: right 0.4s ease;
-}
-
-body.sidebar-right-collapsed .minimap-panel {
-    right: 30px;
 }
 
 .minimap-title {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--font-display);
     font-size: 10px;
     font-weight: 700;
-    letter-spacing: 1.5px;
+    letter-spacing: 1.2px;
     color: var(--text-secondary);
     margin-bottom: 6px;
 }
@@ -798,28 +1093,44 @@ body.sidebar-right-collapsed .minimap-panel {
     fill: var(--accent-green);
 }
 
-/* --- Camera hint --- */
+/* ==========================================================================
+   Camera controls -- bottom-center floating pill
+   ========================================================================== */
+.camera-controls {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 10px 20px;
+    border-radius: 30px;
+    display: flex;
+    align-items: center;
+    z-index: 10;
+}
+
 .camera-hint-text {
-    font-family: 'Rajdhani', sans-serif;
-    font-size: 11px;
+    font-family: var(--font-body);
+    font-size: 12px;
     color: var(--text-secondary);
-    letter-spacing: 0.5px;
+    letter-spacing: 0.2px;
     padding-left: 12px;
     border-left: 1px solid var(--panel-border);
     margin-left: 4px;
     white-space: nowrap;
 }
 
-/* --- Toasts --- */
+/* ==========================================================================
+   Toasts
+   ========================================================================== */
 .toast-container {
-    position: absolute;
+    position: fixed;
     top: 100px;
     left: 50%;
     transform: translateX(-50%);
     display: flex;
     flex-direction: column;
     gap: 8px;
-    z-index: 20;
+    z-index: 40;
     pointer-events: none;
     align-items: center;
 }
@@ -832,9 +1143,9 @@ body.sidebar-right-collapsed .minimap-panel {
     border-left: 3px solid var(--accent-main);
     border-radius: 8px;
     padding: 10px 18px;
-    font-family: 'Rajdhani', sans-serif;
+    font-family: var(--font-body);
     font-weight: 600;
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-primary);
     box-shadow: 0 8px 24px rgba(0,0,0,0.4);
     animation: toast-in 0.3s ease-out, toast-out 0.4s ease-in 2.6s forwards;
@@ -853,16 +1164,18 @@ body.sidebar-right-collapsed .minimap-panel {
     to { opacity: 0; transform: translateY(-12px); }
 }
 
-/* --- Finish overlay --- */
+/* ==========================================================================
+   Finish overlay
+   ========================================================================== */
 .finish-overlay {
-    position: absolute;
+    position: fixed;
     inset: 0;
     display: none;
     align-items: center;
     justify-content: center;
     background: rgba(5, 8, 15, 0.6);
     backdrop-filter: blur(4px);
-    z-index: 30;
+    z-index: 50;
     pointer-events: none;
 }
 
@@ -884,10 +1197,10 @@ body.sidebar-right-collapsed .minimap-panel {
 }
 
 .finish-title {
-    font-family: 'Orbitron', sans-serif;
-    font-size: 24px;
-    font-weight: 900;
-    letter-spacing: 3px;
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
     color: var(--accent-main);
     text-shadow: 0 0 20px rgba(255, 40, 0, 0.5);
 }
@@ -917,7 +1230,7 @@ body.sidebar-right-collapsed .minimap-panel {
 }
 
 .finish-stat .label {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--font-display);
     font-size: 9px;
     color: var(--text-secondary);
     letter-spacing: 1px;
@@ -925,9 +1238,9 @@ body.sidebar-right-collapsed .minimap-panel {
 }
 
 .finish-stat .value {
-    font-family: 'Rajdhani', sans-serif;
-    font-size: 22px;
-    font-weight: 700;
+    font-family: var(--font-mono);
+    font-size: 20px;
+    font-weight: 600;
     color: white;
 }
 
@@ -945,7 +1258,7 @@ body.sidebar-right-collapsed .minimap-panel {
 }
 
 .finish-action-chip {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--font-display);
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.5px;
@@ -960,13 +1273,166 @@ body.sidebar-right-collapsed .minimap-panel {
     width: 100%;
 }
 
-/* --- Overtake Panel --- */
+/* ==========================================================================
+   Documentation overlay -- math/physics reference, opened from the dock rail.
+   Same fixed-overlay pattern as .finish-overlay, but sized for actually
+   reading paragraphs and formulas rather than a compact stats card.
+   ========================================================================== */
+.docs-overlay {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(5, 8, 15, 0.65);
+    backdrop-filter: blur(4px);
+    z-index: 50;
+    pointer-events: none;
+    padding: 40px 20px;
+}
+
+.docs-overlay.visible {
+    display: flex;
+    pointer-events: auto;
+}
+
+.docs-card {
+    width: min(880px, 100%);
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    animation: finish-pop 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.docs-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 24px 28px 20px;
+    border-bottom: 1px solid var(--panel-border);
+    flex-shrink: 0;
+}
+
+.docs-title {
+    font-family: var(--font-display);
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.docs-subtitle {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 5px;
+}
+
+.docs-body {
+    padding: 4px 28px 28px;
+    overflow-y: auto;
+}
+
+.doc-section {
+    padding: 22px 0;
+    border-bottom: 1px solid var(--panel-border);
+}
+
+.doc-section:last-child {
+    border-bottom: none;
+    padding-bottom: 4px;
+}
+
+.doc-section h3 {
+    font-family: var(--font-display);
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--accent-main);
+    margin: 0 0 10px;
+    letter-spacing: 0.2px;
+}
+
+.doc-section p {
+    font-size: 14px;
+    line-height: 1.65;
+    color: #d3dae6;
+    margin: 0 0 12px;
+}
+
+.doc-section p:last-child {
+    margin-bottom: 0;
+}
+
+.doc-section var,
+.doc-section code {
+    font-family: var(--font-mono);
+    font-style: normal;
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.07);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 0.92em;
+}
+
+.doc-formula {
+    font-family: var(--font-mono);
+    font-size: 13.5px;
+    line-height: 1.9;
+    color: #7dd3fc;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--panel-border);
+    border-left: 3px solid var(--accent-main);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 0 0 12px;
+    overflow-x: auto;
+    white-space: nowrap;
+}
+
+.doc-list {
+    margin: 0 0 12px;
+    padding-left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.doc-list li {
+    font-size: 14px;
+    line-height: 1.6;
+    color: #d3dae6;
+}
+
+.doc-list strong {
+    color: var(--text-primary);
+}
+
+.doc-note {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 0;
+}
+
+@media (max-width: 640px) {
+    .doc-formula {
+        white-space: normal;
+        word-break: break-word;
+    }
+}
+
+/* ==========================================================================
+   Overtake Panel
+   ========================================================================== */
 .overtake-panel {
     background: rgba(249, 115, 22, 0.1);
     border: 1px solid var(--accent-orange);
     border-radius: 8px;
     padding: 12px;
-    margin-top: 12px;
+    margin-top: 16px;
     animation: pulse-border 2s infinite;
 }
 
@@ -983,7 +1449,10 @@ body.sidebar-right-collapsed .minimap-panel {
 }
 
 .overtake-title {
-    font-family: 'Orbitron', sans-serif;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-display);
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 1px;
@@ -1010,7 +1479,9 @@ body.sidebar-right-collapsed .minimap-panel {
     100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
 }
 
-/* --- Toggle Switch --- */
+/* ==========================================================================
+   Toggle switch
+   ========================================================================== */
 .toggle-switch {
   position: relative;
   display: inline-block;
@@ -1039,7 +1510,9 @@ input:checked + .slider:before {
 .slider.round { border-radius: 20px; }
 .slider.round:before { border-radius: 50%; }
 
-/* --- Event Timeline --- */
+/* ==========================================================================
+   Event Timeline
+   ========================================================================== */
 .timeline-container {
     background: rgba(0,0,0,0.2);
     border-radius: 6px;
@@ -1057,10 +1530,229 @@ input:checked + .slider:before {
     margin-top: 10px;
 }
 .timeline-event {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--text-primary);
     padding-left: 10px;
     border-left: 2px solid var(--accent-orange);
     animation: lap-row-in 0.3s ease-out;
+}
+
+/* ==========================================================================
+   Header mode indicator: makes the F1/EV-fleet toggle (Setup tab) visible
+   from anywhere in the app, not just when that tab happens to be open.
+   ========================================================================== */
+.mode-indicator {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    background: rgba(255, 40, 0, 0.08);
+    border: 1px solid rgba(255, 40, 0, 0.25);
+    font-family: var(--font-display);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    color: var(--accent-main);
+    transition: background 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+}
+
+.mode-indicator-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 6px currentColor;
+}
+
+.mode-indicator.fleet {
+    background: rgba(56, 189, 248, 0.1);
+    border-color: rgba(56, 189, 248, 0.3);
+    color: #38bdf8;
+}
+
+/* --- Fleet/F1 mode switch bar (Setup tab) --- */
+.mode-switch-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid var(--panel-border);
+    padding: 10px 14px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+}
+
+.mode-switch-text {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.mode-switch-title {
+    font-family: var(--font-display);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    color: var(--text-secondary);
+}
+
+.mode-switch-value {
+    font-family: var(--font-display);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    color: var(--text-primary);
+}
+
+/* ==========================================================================
+   Baseline comparison panel (finish overlay)
+   ========================================================================== */
+.baseline-comparison {
+    margin: 20px 0;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 14px;
+    background: rgba(0, 0, 0, 0.3);
+    text-align: left;
+}
+
+.baseline-comparison-title {
+    font-family: var(--font-display);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+}
+
+.baseline-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.baseline-table th {
+    text-align: left;
+    padding: 0 4px 8px;
+    border-bottom: 1px solid var(--panel-border);
+    color: var(--text-secondary);
+    font-family: var(--font-display);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+.baseline-table td {
+    padding: 8px 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    font-family: var(--font-body);
+    color: #e2e8f0;
+}
+
+.baseline-table tr:last-child td {
+    border-bottom: none;
+}
+
+.baseline-table-empty {
+    padding-top: 10px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+.baseline-row-proposed td {
+    background: rgba(249, 115, 22, 0.12);
+    color: #fff;
+    font-weight: 700;
+}
+
+.baseline-row-oracle td {
+    color: var(--accent-green);
+    font-weight: 700;
+}
+
+/* ==========================================================================
+   Responsive
+   ========================================================================== */
+
+/* Below ~640px there usually isn't room for both a header hint label and a full-size playback
+   toolbar on one line even after wrapping -- trim secondary text first rather than letting
+   things get cramped or wrap onto three/four lines. Buttons keep a `title` attribute (see
+   index.html) so their icon-only form is still identified on hover/long-press. */
+@media (max-width: 640px) {
+    .mode-indicator span:not(.mode-indicator-dot),
+    .status-pill span:not(.status-dot),
+    .logo-suffix {
+        display: none;
+    }
+
+    .btn-with-icon span {
+        display: none;
+    }
+
+    .btn-with-icon {
+        padding: 10px;
+        width: 40px;
+        justify-content: center;
+    }
+
+    .camera-hint-text {
+        display: none;
+    }
+}
+
+/* Gauges scale down with the HUD panel itself instead of overflowing it -- .right-dock's own
+   width already shrinks fluidly via min(260px, 34vw) above, so a fixed 92px ring would eventually
+   not fit two across on a narrow phone-width viewport. */
+.gauge-grid {
+    flex-wrap: wrap;
+}
+
+.gauge-ring {
+    width: clamp(56px, 17vw, 92px);
+    height: clamp(56px, 17vw, 92px);
+}
+
+.gauge-inner {
+    width: 78%;
+    height: 78%;
+}
+
+.gauge-value {
+    font-size: clamp(14px, 4vw, 19px);
+}
+
+/* Bottom-center camera pill: constrained to the viewport width and allowed to wrap instead of
+   forcing horizontal overflow when both the dropdown and hint text can't fit on one line. */
+.camera-controls {
+    max-width: calc(100vw - 40px);
+    flex-wrap: wrap;
+    justify-content: center;
+    row-gap: 6px;
+}
+
+/* Finish-race modal: sized relative to the viewport instead of a fixed 420px, which would
+   overflow (and, since body has overflow:hidden, be genuinely unreachable/uncloseable) on any
+   viewport narrower than about 460px. */
+.finish-card {
+    width: min(420px, calc(100vw - 40px));
+    max-height: calc(100vh - 40px);
+    overflow-y: auto;
+    padding: clamp(20px, 5vw, 32px);
+}
+
+/* Toasts: allowed to wrap and capped to the viewport width instead of a fixed-width nowrap pill,
+   which could run off both edges of a narrow screen for a longer message. */
+.toast-container {
+    max-width: calc(100vw - 40px);
+}
+
+.toast {
+    white-space: normal;
+    max-width: 100%;
 }

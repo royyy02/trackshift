@@ -8,29 +8,85 @@ let raceConfig = { trackClass: 'Balanced', laps: 5 };
 let raceIsActive = false;
 let isFleetMode = false;
 
+// Full-fidelity race record, kept for PDF export -- unlike timeData/socData/eReqData above
+// (capped to the last 200 samples so the live Chart.js line stays cheap to redraw every tick),
+// these are never trimmed, so the exported report always covers the entire race, not just
+// whatever the live chart currently happens to be showing.
+let historyLog = []; // [{time, soc_mj, e_req, velocity_kmh, deploy_kw, regen_kw, lap, action}]
+let timelineEvents = []; // plain strings, mirrors what addTimelineEvent() renders into the DOM
+let lastFinishData = null; // the most recent 'finished' websocket message, verbatim
+let lastBaselineResults = null; // the most recent 'baseline_results' message's `baselines` array
+
 function toggleFleetMode() {
     isFleetMode = document.getElementById('fleet-toggle').checked;
-    
+
     // Update labels to sell the domain transfer
-    document.getElementById('mode-label').innerText = isFleetMode ? 'EV DELIVERY FLEET' : 'F1 MOTORSPORT';
-    document.querySelector('.brand p').innerText = isFleetMode ? 'FLEET INTELLIGENCE' : 'ENERGY INTELLIGENCE CORE';
-    
+    const modeLabel = isFleetMode ? 'EV DELIVERY FLEET' : 'F1 MOTORSPORT';
+    document.getElementById('mode-label').innerText = modeLabel;
+
+    // Mirror the toggle in the header so the active domain is visible even when the dock is
+    // collapsed, not just as a checkbox state buried in the Setup tab.
+    document.getElementById('mode-indicator-text').textContent = modeLabel;
+    document.getElementById('mode-indicator').classList.toggle('fleet', isFleetMode);
+
     // Send command to backend
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ command: "set_mode", mode: isFleetMode ? 'fleet' : 'f1' }));
     }
+
+    // The backend stops the current run when the mode switches (the new vehicle/battery
+    // config wouldn't match an in-progress race), but that happens silently over the
+    // websocket with no dedicated message back -- surface it here instead of leaving the
+    // dashboard showing a frozen "LIVE" race that's actually no longer being simulated.
+    if (raceIsActive) {
+        showToast(`SWITCHED TO ${isFleetMode ? 'EV FLEET' : 'F1 MOTORSPORT'} MODE — PRESS START TO RACE`, 'warn');
+        raceIsActive = false;
+        setStatusPill('connected', 'CONNECTED');
+        document.getElementById('btn-start').disabled = false;
+    }
+}
+
+// --- Responsive layout ---
+// The header wraps onto a second line on narrow viewports (flex-wrap in style.css), so its
+// height isn't a fixed constant -- every fixed-position panel below it (.dock, .right-dock)
+// reads this custom property for its own top offset instead of a hardcoded pixel value, so they
+// always sit right below the header regardless of how tall it currently is.
+const mainHeaderEl = document.querySelector('.main-header');
+if (mainHeaderEl && 'ResizeObserver' in window) {
+    // Deliberately re-measure via offsetHeight inside the callback rather than using the
+    // ResizeObserver entry's own contentRect -- contentRect reports the content box only
+    // (excludes padding/border), but .main-header has real vertical padding, so contentRect
+    // under-reports the header's actual rendered (border-box) height by exactly that padding.
+    // Every panel below it then anchors itself ~24px too high and visibly tucks up under the
+    // header's second row whenever it wraps on a narrower viewport.
+    const headerResizeObserver = new ResizeObserver(() => {
+        document.documentElement.style.setProperty('--header-h', `${mainHeaderEl.offsetHeight}px`);
+    });
+    headerResizeObserver.observe(mainHeaderEl);
 }
 
 // --- Three.js Setup ---
 const trackContainer = document.getElementById('track-container');
 const cameraHint = document.getElementById('camera-hint');
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xf1f5f9); // off-white
+// Matches the dashboard's own --bg-color (style.css) instead of the previous off-white, which
+// read as a jarring blank void against the dark glass-panel UI around it. Fog fades the track
+// into that same color at distance instead of a hard horizon cut, for a bit of depth.
+scene.background = new THREE.Color(0x0b0f19);
+scene.fog = new THREE.Fog(0x0b0f19, 300, 4000);
 
 const camera = new THREE.PerspectiveCamera(60, trackContainer.clientWidth / trackContainer.clientHeight, 0.1, 20000);
 camera.position.set(0, 45, 45);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+// antialias is off and powerPreference is forced to 'high-performance' for real-world laptop
+// performance, not raw visual quality: on hybrid-graphics laptops (integrated + discrete GPU),
+// browsers default WebGL context creation to the low-power integrated GPU unless a page
+// explicitly asks otherwise -- that alone can be the difference between smooth and "lags a lot,
+// like a lot" on the exact same hardware. MSAA (antialias:true) is also one of the single most
+// expensive WebGL context flags on weaker/integrated GPUs, and buys very little here since the
+// track is a thin flattened ribbon viewed from a distance, not the kind of high-contrast hard
+// edge antialiasing is worth its cost for.
+const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
 renderer.setSize(trackContainer.clientWidth, trackContainer.clientHeight);
 trackContainer.appendChild(renderer.domElement);
 
@@ -41,8 +97,14 @@ const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
 dirLight.position.set(0, 100, 50);
 scene.add(dirLight);
 
-// Grid Helper for ground
-const gridHelper = new THREE.GridHelper(20000, 2000, 0x94a3b8, 0xcbd5e1);
+// Grid Helper for ground -- dim slate lines meant to read as a subtle surface texture on the
+// dark scene, not the light-mode checkerboard (0x94a3b8/0xcbd5e1) this used to be. 300 divisions
+// (not the 2000 this briefly was) -- purely decorative background geometry doesn't need to be
+// nearly that dense, and at 2000 divisions a 20000-unit grid packs lines closer together than a
+// pixel at any real camera distance, which both wastes GPU time rendering lines nobody can
+// resolve and produces visible moire/flicker from the aliasing of it, which itself reads as
+// "laggy" even when the frame rate is fine.
+const gridHelper = new THREE.GridHelper(20000, 300, 0x2a3348, 0x141826);
 gridHelper.position.y = -0.5;
 scene.add(gridHelper);
 
@@ -56,7 +118,6 @@ controls.maxDistance = 400;
 controls.maxPolarAngle = Math.PI * 0.495; // don't let the camera dip below the ground plane
 controls.target.set(0, 0, 0);
 
-let cameraMode = 'orbit'; // 'chase' | 'orbit' | 'free'
 const cameraHints = {
     chase: 'CHASE CAM — rigid follow, scroll to zoom',
     orbit: 'ORBIT (LOCK-ON) — drag to rotate, scroll to zoom, rigid follow',
@@ -68,7 +129,14 @@ function setCameraMode(mode) {
     controls.enabled = (mode !== 'chase');
     if (cameraHint) cameraHint.textContent = cameraHints[mode];
 }
-setCameraMode('orbit');
+
+// Initialize from whatever the <select> actually shows rather than a value hardcoded here --
+// previously this was hardcoded to 'orbit' while the HTML's default selected option was
+// 'chase', so on load the dropdown *displayed* "CHASE CAM" while the real internal mode (and
+// therefore which zoom/drag path was live) was actually orbit. Reading the select's own value
+// guarantees the label and the behavior always agree, on load and after any future HTML edits.
+let cameraMode = document.getElementById('camera-mode-select').value;
+setCameraMode(cameraMode);
 
 let chaseCamZoom = 1.0;
 window.addEventListener('wheel', (e) => {
@@ -254,10 +322,17 @@ function buildTrack(segments) {
     // divisions = point count -> 0.04 here -- roughly 70x smoother than the default.
     trackCurve.arcLengthDivisions = Math.max(40000, flatPoints.length * 10);
 
-    // Flat black 2D road
-    const tubularSegments = Math.min(points.length * 2, 4000);
-    const tubeGeo = new THREE.TubeGeometry(trackCurve, tubularSegments, 6, 8, false);
-    const tubeMat = new THREE.MeshLambertMaterial({ color: 0x111111, wireframe: false });
+    // Flat asphalt-gray road. Was near-black (0x111111), tuned for contrast against the
+    // scene's old off-white background -- on the current dark background that would nearly
+    // disappear into it instead of reading as a track.
+    // Segment counts trimmed from (points.length*2 capped at 4000, 8 radial) -- the curve's own
+    // smoothness comes from CatmullRom interpolation + arcLengthDivisions above, not from how
+    // many tube segments slice it, so that density bought triangle count, not visual quality.
+    // Radial segments stay at 6 (not 8): the tube is flattened to 1% scale on Y right below, so
+    // it reads as a flat ribbon either way -- the extra round-ness was invisible.
+    const tubularSegments = Math.min(points.length, 2000);
+    const tubeGeo = new THREE.TubeGeometry(trackCurve, tubularSegments, 6, 6, false);
+    const tubeMat = new THREE.MeshLambertMaterial({ color: 0x3a3f4b, wireframe: false });
 
     const trackMesh = new THREE.Mesh(tubeGeo, tubeMat);
     // Flatten Y axis to make it a 2D road
@@ -563,6 +638,8 @@ function connect() {
             applyDiscreteTelemetry(msg);
             update3DView(msg.distance, msg.action);
         } else if (msg.type === 'track_geometry') {
+            if (msg.max_speed_kmh) MAX_SPEED_KMH = msg.max_speed_kmh;
+            if (msg.max_power_kw) MAX_POWER_KW = msg.max_power_kw;
             buildTrack(msg.track);
             raceIsActive = true;
             setStatusPill('live', 'LIVE');
@@ -574,6 +651,8 @@ function connect() {
             handleLapComplete(msg);
         } else if (msg.type === 'finished') {
             handleRaceFinished(msg);
+        } else if (msg.type === 'baseline_results') {
+            renderBaselineTable(msg.baselines);
         } else if (msg.type === 'status') {
             console.log(msg.message);
         }
@@ -585,9 +664,12 @@ function connect() {
     };
 }
 
-const MAX_SPEED_KMH = 380; // deployment curve tapers to 0 by 355 km/h (see regulation_config.py)
-
-const MAX_POWER_KW = 350;
+// Gauge full-scale values. Defaults match the F1 config, but the server sends the live values
+// (derived from whichever regulation config is actually active -- F1 or EV-fleet mode, see
+// toggleFleetMode()) on every track_geometry message, so these self-correct after a mode
+// switch instead of staying hardcoded to F1's 380 km/h / 350 kW range.
+let MAX_SPEED_KMH = 380;
+let MAX_POWER_KW = 350;
 
 // Called once per animation frame (60fps) with an already-interpolated telemetry snapshot --
 // everything here is a smoothly-varying number, so it just writes it straight to the DOM. No
@@ -640,9 +722,11 @@ function addTimelineEvent(text) {
     const eventEl = document.createElement('div');
     eventEl.className = 'timeline-event';
     eventEl.innerText = text;
-    
+
     container.appendChild(eventEl);
     container.scrollTop = container.scrollHeight;
+
+    timelineEvents.push(text);
 }
 
 // Called once per telemetry message -- everything here is inherently a discrete/categorical
@@ -651,9 +735,9 @@ function addTimelineEvent(text) {
 function applyDiscreteTelemetry(data) {
     document.getElementById('val-lap').innerText = `${data.lap} / ${data.total_laps}`;
 
-    document.getElementById('flag-rain').classList.toggle('active-rain', data.raining);
-    document.getElementById('flag-sc').classList.toggle('active-sc', data.safety_car);
-    document.getElementById('flag-power').classList.toggle('active-power', data.limited_power);
+    document.getElementById('btn-rain').classList.toggle('active-rain', data.raining);
+    document.getElementById('btn-sc').classList.toggle('active-sc', data.safety_car);
+    document.getElementById('btn-power').classList.toggle('active-power', data.limited_power);
     if (data.raining !== lastFlags.raining) {
         showToast(data.raining ? 'RAIN STARTED' : 'RAIN CLEARED', 'warn');
         addTimelineEvent(`[LAP ${data.lap}] ${data.raining ? 'RAIN DETECTED' : 'RAIN CLEARED'}`);
@@ -724,6 +808,19 @@ function applyDiscreteTelemetry(data) {
     }
 
     energyChart.update();
+
+    // Uncapped -- see the historyLog declaration up top for why this doesn't share the
+    // 200-sample trim above.
+    historyLog.push({
+        time: data.time,
+        soc_mj: data.soc_mj,
+        e_req: data.e_req,
+        velocity_kmh: data.velocity_kmh,
+        deploy_kw: data.deploy_kw,
+        regen_kw: data.regen_kw,
+        lap: data.lap,
+        action: data.action,
+    });
 }
 
 // --- Toasts ---
@@ -777,6 +874,7 @@ function renderLapTimes() {
 
 // --- Race finished summary ---
 function handleRaceFinished(msg) {
+    lastFinishData = msg; // kept verbatim for the PDF export's summary section
     raceIsActive = false;
     setStatusPill('finished', 'FINISHED');
     document.getElementById('btn-start').disabled = false;
@@ -798,37 +896,79 @@ function handleRaceFinished(msg) {
         .map(([action, count]) => `<span class="finish-action-chip">${action.split(' -')[0]}: ${count}</span>`)
         .join('');
 
-    // Render baseline comparisons
-    const baselineTbody = document.getElementById('baseline-table-body');
-    if (baselineTbody && msg.baselines) {
-        const oracle = msg.baselines.find(b => b.name.includes('Oracle'));
-        const oracleTime = oracle ? oracle.time_s : msg.total_time_s;
-        
-        baselineTbody.innerHTML = msg.baselines.map(b => {
-            const isProposed = b.name.includes('Proposed');
-            const delta = b.time_s - oracleTime;
-            const deltaPct = (delta / oracleTime) * 100;
-            
-            let deltaStr = delta === 0 ? "Theoretical Best" : `+${delta.toFixed(2)}s (+${deltaPct.toFixed(1)}%)`;
-            let rowStyle = isProposed ? "background: rgba(249, 115, 22, 0.15); color: #fff; font-weight: bold;" : "color: #e2e8f0;";
-            if (b.name.includes('Oracle')) rowStyle = "color: var(--accent-green); font-weight: bold;";
-            
-            return `
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); ${rowStyle}">
-                    <td style="padding: 8px 4px;">${b.name}</td>
-                    <td style="padding: 8px 4px;">${formatLapTime(b.time_s)}</td>
-                    <td style="padding: 8px 4px;">${deltaStr}</td>
-                </tr>
-            `;
-        }).join('');
-    }
+    // The baseline/Oracle comparison arrives separately as a 'baseline_results' message --
+    // each of those is a genuine re-simulated race (see dashboard_server.py's
+    // _run_baseline_race), not instant, so this panel is left showing its "Computing
+    // baseline metrics..." placeholder (from index.html) until that message lands.
+    resetBaselineTable();
 
     document.getElementById('finish-overlay').classList.add('visible');
+}
+
+function resetBaselineTable() {
+    const baselineTbody = document.getElementById('baseline-table-body');
+    if (baselineTbody) {
+        baselineTbody.innerHTML = '<tr><td colspan="3" class="baseline-table-empty">Computing baseline metrics...</td></tr>';
+    }
+}
+
+function renderBaselineTable(baselines) {
+    const baselineTbody = document.getElementById('baseline-table-body');
+    if (!baselineTbody || !baselines) return;
+
+    lastBaselineResults = baselines; // kept for the PDF export's baseline-comparison table
+
+    const oracle = baselines.find(b => b.name.includes('Oracle'));
+    const oracleTime = oracle ? oracle.time_s : Math.min(...baselines.map(b => b.time_s));
+
+    baselineTbody.innerHTML = baselines.map(b => {
+        const isProposed = b.name.includes('Proposed');
+        const isOracle = b.name.includes('Oracle');
+        const delta = b.time_s - oracleTime;
+        const deltaPct = oracleTime > 0 ? (delta / oracleTime) * 100 : 0;
+
+        // delta can be negative (this policy beat the reference row) -- toFixed() doesn't add
+        // a '-' of its own for negative numbers the way it silently omits '+' for positive
+        // ones, so prefixing a literal '+' unconditionally produced a double sign ("+-4.00s").
+        let deltaStr;
+        if (Math.abs(delta) < 0.005) {
+            deltaStr = "Theoretical Best";
+        } else {
+            const sign = delta > 0 ? '+' : '-';
+            deltaStr = `${sign}${Math.abs(delta).toFixed(2)}s (${sign}${Math.abs(deltaPct).toFixed(1)}%)`;
+        }
+        const rowClass = isOracle ? 'baseline-row-oracle' : (isProposed ? 'baseline-row-proposed' : '');
+
+        return `
+            <tr class="${rowClass}">
+                <td>${b.name}</td>
+                <td>${formatLapTime(b.time_s)}</td>
+                <td>${deltaStr}</td>
+            </tr>
+        `;
+    }).join('');
 }
 
 function closeFinishOverlay() {
     document.getElementById('finish-overlay').classList.remove('visible');
 }
+
+// --- Documentation overlay ---
+function openDocs() {
+    document.getElementById('docs-overlay').classList.add('visible');
+}
+
+function closeDocs() {
+    document.getElementById('docs-overlay').classList.remove('visible');
+}
+
+document.getElementById('docs-overlay').addEventListener('click', (e) => {
+    if (e.target.id === 'docs-overlay') closeDocs(); // click on the backdrop, not the card itself
+});
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeDocs();
+});
 
 // --- Race setup ---
 function randomizeSeed() {
@@ -837,14 +977,78 @@ function randomizeSeed() {
 }
 randomizeSeed();
 
-function startRace() {
-    if (raceIsActive || !ws || ws.readyState !== WebSocket.OPEN) return;
+// Every piece of UI state a race can leave behind, reset in one place -- used by both
+// startRace() (a fresh race shouldn't show leftover numbers from the previous one for the
+// ~100ms before the first telemetry message arrives) and resetRace() (previously this only
+// cleared the chart data and a handful of text fields, so gauges, flags, the action box, the
+// overtake panel, the pause button, and the event timeline all silently kept showing the
+// finished race's last values after a reset).
+function resetTelemetryUI() {
     timeData.length = 0;
     socData.length = 0;
     eReqData.length = 0;
+    historyLog.length = 0;
+    timelineEvents.length = 0;
+    lastFinishData = null;
+    lastBaselineResults = null;
     lapTimes = [];
+    energyChart.update();
     renderLapTimes();
     closeFinishOverlay();
+
+    // Playback control
+    isPaused = false;
+    document.getElementById('btn-pause-label').textContent = 'PAUSE';
+    document.getElementById('btn-pause-icon').innerHTML = ICON_PAUSE;
+
+    // Gauges / core telemetry
+    document.getElementById('val-lap').innerText = '0 / 0';
+    document.getElementById('val-speed').innerText = '0.0';
+    document.getElementById('val-soc').innerText = document.getElementById('val-cap').value;
+    document.getElementById('val-power').innerText = '0';
+    document.getElementById('gauge-speed').style.setProperty('--pct', 0);
+    document.getElementById('gauge-soc').style.setProperty('--pct', 100);
+    document.getElementById('gauge-soc').classList.remove('gauge-low');
+
+    const fillEl = document.getElementById('power-flow-fill');
+    fillEl.style.left = '50%';
+    fillEl.style.width = '0%';
+    fillEl.classList.remove('regen');
+
+    // Strategy panel
+    document.getElementById('val-action').innerText = 'WAITING';
+    document.getElementById('val-action').className = 'action-box';
+    document.getElementById('val-ereq').innerText = '0.00';
+    document.getElementById('val-sige').innerText = '0.00';
+    document.getElementById('val-rsafety').innerText = '0.00';
+    document.getElementById('val-deployable').innerText = '0.00';
+    const robEl = document.getElementById('val-robustness');
+    robEl.innerText = 'ROBUSTNESS: HIGH (SAFE)';
+    robEl.style.backgroundColor = '';
+    robEl.style.color = '';
+    robEl.style.borderColor = '';
+    document.getElementById('overtake-panel').style.display = 'none';
+
+    // Environment flags -- live on the disturbance buttons themselves now (they double as their
+    // own status indicator; see .btn-toggle.active-* in style.css), not a separate flag row.
+    document.getElementById('btn-rain').classList.remove('active-rain');
+    document.getElementById('btn-sc').classList.remove('active-sc');
+    document.getElementById('btn-power').classList.remove('active-power');
+    lastFlags = { raining: false, safety_car: false, limited_power: false };
+    lastAction = '';
+
+    const timeline = document.getElementById('timeline-container');
+    if (timeline) timeline.innerHTML = '<div class="timeline-empty">No events yet</div>';
+
+    resetBaselineTable();
+
+    lastTelemetrySnapshot = null;
+    targetTelemetrySnapshot = null;
+}
+
+function startRace() {
+    if (raceIsActive || !ws || ws.readyState !== WebSocket.OPEN) return;
+    resetTelemetryUI();
 
     const trackClass = document.getElementById('track-class-select').value;
     const laps = parseInt(document.getElementById('laps-select').value, 10);
@@ -857,36 +1061,25 @@ function startRace() {
 }
 
 function resetRace() {
-    timeData.length = 0;
-    socData.length = 0;
-    eReqData.length = 0;
-    lapTimes = [];
-    energyChart.update();
-    renderLapTimes();
-    closeFinishOverlay();
+    resetTelemetryUI();
     raceIsActive = false;
     setStatusPill('connected', 'CONNECTED');
-
-    // Clear UI metrics
-    document.getElementById('val-lap').innerText = '0 / 0';
-    document.getElementById('val-speed').innerText = '0.0';
-    document.getElementById('val-power').innerText = '0';
-    document.getElementById('val-action').innerText = 'WAITING';
-    document.getElementById('val-action').className = 'action-box';
-    document.getElementById('gauge-speed').style.setProperty('--pct', 0);
-    document.getElementById('gauge-soc').style.setProperty('--pct', 100);
     document.getElementById('btn-start').disabled = false;
-    lastAction = "";
-    lastTelemetrySnapshot = null;
-    targetTelemetrySnapshot = null;
 
     ws.send(JSON.stringify({command: "reset"}));
 }
 
+// Icon markup swapped into #btn-pause-icon on each toggle -- the button also holds a separate
+// text label (#btn-pause-label), so this can't just be a blanket innerText/innerHTML write on
+// the button itself without wiping out the other child.
+const ICON_PAUSE = '<svg class="icon" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>';
+const ICON_PLAY = '<svg class="icon" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
+
 let isPaused = false;
 function pauseRace() {
     isPaused = !isPaused;
-    document.getElementById('btn-pause').innerText = isPaused ? 'RESUME' : 'PAUSE';
+    document.getElementById('btn-pause-label').textContent = isPaused ? 'RESUME' : 'PAUSE';
+    document.getElementById('btn-pause-icon').innerHTML = isPaused ? ICON_PLAY : ICON_PAUSE;
     if (raceIsActive) setStatusPill(isPaused ? 'paused' : 'live', isPaused ? 'PAUSED' : 'LIVE');
     ws.send(JSON.stringify({command: "pause"}));
 }
@@ -904,38 +1097,393 @@ document.getElementById('speed-select').addEventListener('change', (e) => {
     setSpeed(e.target.value);
 });
 
-// Tuning Sliders
+// Tuning sliders -- each paired with a typable number input (#val-mass etc.) so a precise value
+// can be entered directly instead of only ever dragging the slider. The two stay in sync in both
+// directions; either one committing a value sends the same 'set_tune' websocket message.
 function setupTuning() {
     const params = ['mass', 'cla', 'cap'];
     params.forEach(param => {
         const slider = document.getElementById(`tune-${param}`);
-        const label = document.getElementById(`val-${param}`);
-        if (slider && label) {
-            slider.addEventListener('input', (e) => {
-                label.innerText = parseFloat(e.target.value).toFixed(param === 'mass' ? 0 : 2);
-            });
-            slider.addEventListener('change', (e) => {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    let backendParam = param;
-                    if (param === 'cap') backendParam = 'capacity';
-                    ws.send(JSON.stringify({
-                        command: 'set_tune',
-                        param: backendParam,
-                        value: e.target.value
-                    }));
-                }
-            });
+        const input = document.getElementById(`val-${param}`);
+        if (!slider || !input) return;
+
+        const decimals = param === 'mass' ? 0 : 2;
+        const backendParam = param === 'cap' ? 'capacity' : param;
+
+        function sendTune(value) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'set_tune', param: backendParam, value }));
+            }
         }
+
+        slider.addEventListener('input', (e) => {
+            input.value = parseFloat(e.target.value).toFixed(decimals);
+        });
+        slider.addEventListener('change', (e) => sendTune(e.target.value));
+
+        function commitTypedValue() {
+            const min = parseFloat(slider.min);
+            const max = parseFloat(slider.max);
+            let v = parseFloat(input.value);
+            if (Number.isNaN(v)) v = parseFloat(slider.value);
+            v = Math.min(max, Math.max(min, v));
+            input.value = v.toFixed(decimals);
+            slider.value = v;
+            sendTune(v);
+        }
+
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') input.blur();
+        });
+        input.addEventListener('blur', commitTypedValue);
     });
 }
 setupTuning();
 
-function toggleSidebar(side) {
-    const el = document.querySelector(`.sidebar-${side}`);
-    if (el) {
-        el.classList.toggle('collapsed');
-        document.body.classList.toggle(`sidebar-${side}-collapsed`);
+// --- Custom dropdowns ---
+// Progressively enhances a native <select> into a glass-panel-styled dropdown that matches the
+// rest of the app instead of the browser's default popup. The original <select> is kept in the
+// DOM (visually hidden, not display:none, so it's still a real focusable/valid form control) as
+// the single source of truth for its value -- every existing piece of code elsewhere in this
+// file that reads `select.value` or listens for the select's 'change' event keeps working
+// completely unchanged, because a real 'change' Event is dispatched on that same element
+// whenever a custom option is picked.
+function enhanceSelect(selectId) {
+    const select = document.getElementById(selectId);
+    if (!select || select.dataset.enhanced) return;
+    select.dataset.enhanced = '1';
+
+    const isFull = select.classList.contains('full-select');
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'custom-select' + (isFull ? ' custom-select-full' : '');
+    select.parentNode.insertBefore(wrapper, select);
+    wrapper.appendChild(select);
+    select.classList.add('sr-select');
+
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'custom-select-trigger';
+    trigger.innerHTML = '<span class="custom-select-label"></span>' +
+        '<svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>';
+    wrapper.appendChild(trigger);
+
+    const panel = document.createElement('div');
+    panel.className = 'custom-select-panel';
+    wrapper.appendChild(panel);
+
+    const labelEl = trigger.querySelector('.custom-select-label');
+
+    function syncLabel() {
+        const opt = select.options[select.selectedIndex];
+        labelEl.textContent = opt ? opt.textContent : '';
     }
+
+    function buildOptions() {
+        panel.innerHTML = '';
+        Array.from(select.options).forEach((opt, idx) => {
+            const item = document.createElement('div');
+            item.className = 'custom-select-option' + (idx === select.selectedIndex ? ' selected' : '');
+            item.textContent = opt.textContent;
+            item.addEventListener('click', () => {
+                if (select.selectedIndex !== idx) {
+                    select.selectedIndex = idx;
+                    syncLabel();
+                    select.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                closePanel();
+            });
+            panel.appendChild(item);
+        });
+    }
+
+    function onDocClick(e) {
+        if (!wrapper.contains(e.target)) closePanel();
+    }
+
+    function openPanel() {
+        buildOptions();
+        wrapper.classList.add('open');
+        document.addEventListener('click', onDocClick);
+
+        // Flip the panel above the trigger when there isn't enough room below it -- e.g. the
+        // camera-mode dropdown sits in a pill pinned near the bottom of the viewport, and body
+        // has overflow:hidden with no page scroll, so a panel that opened downward there would
+        // render partly or entirely past the visible viewport with no way to reach it.
+        const triggerRect = trigger.getBoundingClientRect();
+        const panelHeight = panel.scrollHeight;
+        const spaceBelow = window.innerHeight - triggerRect.bottom;
+        const spaceAbove = triggerRect.top;
+        wrapper.classList.toggle('drop-up', panelHeight + 12 > spaceBelow && spaceAbove > spaceBelow);
+    }
+
+    function closePanel() {
+        wrapper.classList.remove('open');
+        document.removeEventListener('click', onDocClick);
+    }
+
+    trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (wrapper.classList.contains('open')) closePanel();
+        else openPanel();
+    });
+
+    syncLabel();
+}
+
+['track-class-select', 'laps-select', 'speed-select', 'camera-mode-select'].forEach(enhanceSelect);
+
+// --- Left dock: icon rail + sliding tab drawer ---
+let activeTab = null;
+
+function openTab(name) {
+    const drawer = document.getElementById('dock-drawer');
+    const buttons = document.querySelectorAll('.dock-rail-btn');
+
+    if (activeTab === name) {
+        // Clicking the already-open tab collapses the drawer back to just the icon rail.
+        drawer.classList.remove('open');
+        buttons.forEach(b => b.classList.remove('active'));
+        activeTab = null;
+        return;
+    }
+
+    activeTab = name;
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.dataset.tab === name));
+    buttons.forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+    drawer.classList.add('open');
+}
+
+function toggleDock() {
+    document.getElementById('dock').classList.toggle('hidden');
+}
+
+openTab('setup');
+
+// --- PDF race report export ---
+// Renders a Chart.js line chart on a detached offscreen canvas and resolves to a PNG data URL.
+// Used instead of screenshotting the live #energyChart canvas because that chart only keeps the
+// last 200 samples (capped for render performance -- see historyLog's declaration), while the
+// export should cover the whole race.
+function renderOfflineChart(data, xLabel, yLabel) {
+    return new Promise((resolve) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 900;
+        canvas.height = 380;
+        canvas.style.position = 'fixed';
+        canvas.style.left = '-9999px';
+        document.body.appendChild(canvas);
+
+        const chart = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data,
+            options: {
+                responsive: false,
+                animation: false,
+                plugins: { legend: { labels: { color: '#334155' } } },
+                scales: {
+                    x: { title: { display: true, text: xLabel, color: '#334155' }, ticks: { color: '#64748b' }, grid: { color: '#e2e8f0' } },
+                    y: { title: { display: true, text: yLabel, color: '#334155' }, ticks: { color: '#64748b' }, grid: { color: '#e2e8f0' } },
+                },
+            },
+            plugins: [{
+                id: 'whiteBg',
+                beforeDraw: (c) => {
+                    const chartCtx = c.ctx;
+                    chartCtx.save();
+                    chartCtx.globalCompositeOperation = 'destination-over';
+                    chartCtx.fillStyle = '#ffffff';
+                    chartCtx.fillRect(0, 0, c.width, c.height);
+                    chartCtx.restore();
+                },
+            }],
+        });
+
+        // Two rAF hops so Chart.js has actually painted the canvas before it's snapshotted --
+        // grabbing toDataURL() synchronously right after `new Chart(...)` can catch a blank frame.
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+            const img = canvas.toDataURL('image/png', 1.0);
+            chart.destroy();
+            document.body.removeChild(canvas);
+            resolve(img);
+        }));
+    });
+}
+
+// Draws the same badge-with-lightning-bolt mark as the header's inline SVG logo, but as native
+// jsPDF vector drawing commands rather than a rasterized image -- stays crisp at any zoom/print
+// size instead of pixelating, and needs no canvas round-trip to produce.
+function drawLogo(doc, x, y, size) {
+    const s = size / 32;
+    doc.setFillColor(255, 40, 0);
+    doc.roundedRect(x, y, size, size, size * 0.22, size * 0.22, 'F');
+    doc.setFillColor(255, 255, 255);
+    doc.lines(
+        [[-9 * s, 14 * s], [6 * s, 0], [-2 * s, 10 * s], [11 * s, -15 * s], [-7 * s, 0]],
+        x + 18 * s, y + 4 * s,
+        [1, 1],
+        'F',
+        true
+    );
+}
+
+async function exportRacePDF() {
+    if (historyLog.length === 0 && lapTimes.length === 0) {
+        showToast('NO RACE DATA TO EXPORT YET', 'warn');
+        return;
+    }
+    showToast('GENERATING PDF REPORT…', 'info');
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 40;
+    let y = 54;
+
+    const trackClass = document.getElementById('track-class-select').value;
+    const laps = document.getElementById('laps-select').value;
+
+    const logoSize = 26;
+    drawLogo(doc, margin, y - 20, logoSize);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(20);
+    doc.setTextColor(255, 40, 0);
+    doc.text('TrackShift BMS', margin + logoSize + 10, y);
+    y += 20;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.setTextColor(90, 90, 90);
+    const trackLabel = lastFinishData
+        ? `${lastFinishData.track_class} · ${lastFinishData.total_laps} lap${lastFinishData.total_laps > 1 ? 's' : ''}`
+        : `${trackClass} · ${laps} lap${laps > 1 ? 's' : ''}`;
+    doc.text(`${trackLabel}  ·  Seed ${currentSeed}  ·  Generated ${new Date().toLocaleString()}`, margin, y);
+    y += 18;
+    doc.setDrawColor(225);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 26;
+
+    function sectionTitle(text) {
+        if (y > pageHeight - 90) { doc.addPage(); y = 54; }
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(13);
+        doc.setTextColor(20, 20, 20);
+        doc.text(text, margin, y);
+        y += 8;
+    }
+
+    // Race summary
+    sectionTitle('Race Summary');
+    const best = lapTimes.length ? Math.min(...lapTimes.map(l => l.time_s)) : null;
+    doc.autoTable({
+        startY: y,
+        margin: { left: margin, right: margin },
+        theme: 'plain',
+        styles: { fontSize: 10, cellPadding: 4 },
+        body: [
+            ['Total Time', lastFinishData ? formatLapTime(lastFinishData.total_time_s) : '--'],
+            ['Best Lap', best !== null ? formatLapTime(best) : '--'],
+            ['Avg Speed', lastFinishData ? `${lastFinishData.avg_speed_kmh.toFixed(1)} km/h` : '--'],
+            ['Final SOC', lastFinishData ? `${lastFinishData.final_soc_mj.toFixed(2)} MJ` : '--'],
+            ['Laps Completed', `${lapTimes.length}`],
+            ['Domain', isFleetMode ? 'EV Delivery Fleet' : 'F1 Motorsport'],
+        ],
+        columnStyles: { 0: { fontStyle: 'bold', textColor: [90, 90, 90], cellWidth: 140 }, 1: { textColor: [20, 20, 20] } },
+    });
+    y = doc.lastAutoTable.finalY + 26;
+
+    // Baseline comparison
+    if (lastBaselineResults && lastBaselineResults.length) {
+        sectionTitle('Performance vs. Baselines');
+        const oracle = lastBaselineResults.find(b => b.name.includes('Oracle'));
+        const oracleTime = oracle ? oracle.time_s : Math.min(...lastBaselineResults.map(b => b.time_s));
+        doc.autoTable({
+            startY: y,
+            margin: { left: margin, right: margin },
+            head: [['Strategy', 'Total Time', 'Delta vs Oracle']],
+            body: lastBaselineResults.map((b) => {
+                const delta = b.time_s - oracleTime;
+                const deltaStr = Math.abs(delta) < 0.005 ? 'Theoretical Best' : `${delta > 0 ? '+' : '-'}${Math.abs(delta).toFixed(2)}s`;
+                return [b.name, formatLapTime(b.time_s), deltaStr];
+            }),
+            styles: { fontSize: 9, cellPadding: 5 },
+            headStyles: { fillColor: [15, 23, 42] },
+        });
+        y = doc.lastAutoTable.finalY + 26;
+    }
+
+    // Lap times
+    if (lapTimes.length) {
+        sectionTitle('Lap Times');
+        doc.autoTable({
+            startY: y,
+            margin: { left: margin, right: margin },
+            head: [['Lap', 'Time']],
+            body: lapTimes.map(l => [`${l.lap}`, formatLapTime(l.time_s)]),
+            styles: { fontSize: 9, cellPadding: 4 },
+            headStyles: { fillColor: [15, 23, 42] },
+            columnStyles: { 0: { cellWidth: 100 } },
+        });
+        y = doc.lastAutoTable.finalY + 26;
+    }
+
+    // Action breakdown
+    if (lastFinishData && lastFinishData.action_counts) {
+        sectionTitle('Strategy Action Breakdown');
+        doc.autoTable({
+            startY: y,
+            margin: { left: margin, right: margin },
+            head: [['Action', 'Count']],
+            body: Object.entries(lastFinishData.action_counts).sort((a, b) => b[1] - a[1]),
+            styles: { fontSize: 9, cellPadding: 4 },
+            headStyles: { fillColor: [15, 23, 42] },
+        });
+        y = doc.lastAutoTable.finalY + 26;
+    }
+
+    // Event timeline
+    if (timelineEvents.length) {
+        sectionTitle('Event Timeline');
+        doc.autoTable({
+            startY: y,
+            margin: { left: margin, right: margin },
+            head: [['Event']],
+            body: timelineEvents.map(e => [e]),
+            styles: { fontSize: 9, cellPadding: 4, font: 'courier' },
+            headStyles: { fillColor: [15, 23, 42] },
+        });
+        y = doc.lastAutoTable.finalY + 26;
+    }
+
+    // Full-race graphs, rendered fresh from the uncapped historyLog
+    if (historyLog.length > 1) {
+        doc.addPage();
+        y = 54;
+        sectionTitle('Energy Profile (Full Race)');
+        const energyImg = await renderOfflineChart({
+            labels: historyLog.map(h => h.time.toFixed(0)),
+            datasets: [
+                { label: 'Actual SOC (MJ)', data: historyLog.map(h => h.soc_mj), borderColor: '#ff2800', backgroundColor: 'rgba(255,40,0,0.08)', fill: true, pointRadius: 0, tension: 0.1 },
+                { label: 'Predicted Requirement (MJ)', data: historyLog.map(h => h.e_req), borderColor: '#f59e0b', borderDash: [5, 5], pointRadius: 0, tension: 0.1 },
+            ],
+        }, 'Time (s)', 'Energy (MJ)');
+        doc.addImage(energyImg, 'PNG', margin, y + 6, pageWidth - margin * 2, (pageWidth - margin * 2) * (380 / 900));
+        y += (pageWidth - margin * 2) * (380 / 900) + 40;
+
+        sectionTitle('Speed Profile (Full Race)');
+        const speedImg = await renderOfflineChart({
+            labels: historyLog.map(h => h.time.toFixed(0)),
+            datasets: [
+                { label: 'Speed (km/h)', data: historyLog.map(h => h.velocity_kmh), borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.08)', fill: true, pointRadius: 0, tension: 0.1 },
+            ],
+        }, 'Time (s)', 'Speed (km/h)');
+        doc.addImage(speedImg, 'PNG', margin, y + 6, pageWidth - margin * 2, (pageWidth - margin * 2) * (380 / 900));
+    }
+
+    const safeTrack = (lastFinishData ? lastFinishData.track_class : trackClass).replace(/\s+/g, '_');
+    doc.save(`TrackShift-BMS_${safeTrack}_seed${currentSeed}_${Date.now()}.pdf`);
+    showToast('PDF REPORT DOWNLOADED', 'good');
 }
 
 connect();

@@ -2,19 +2,25 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.regulation_config import ENERGY_STORE_CAP_MJ, MAX_MGU_K_REGEN_POWER_KW
-from config.battery_config import DRIVE_REGEN_ROUND_TRIP_EFFICIENCY
+import config.regulation_config as regulation_config
+import config.battery_config as battery_config
 
 class BatteryModel:
     """
     MVP battery model per PRD Section 11.1.
     """
-    
-    def __init__(self, initial_soc_mj: float = ENERGY_STORE_CAP_MJ):
-        self.capacity_mj = ENERGY_STORE_CAP_MJ
+
+    # initial_soc_mj can't default to regulation_config.ENERGY_STORE_CAP_MJ directly -- a
+    # parameter default is evaluated once, when this module is first imported, so it would
+    # freeze at whatever capacity was live at that moment (same staleness problem as reading
+    # the config at module-import time instead of at construction time, just one level deeper).
+    def __init__(self, initial_soc_mj: float | None = None):
+        self.capacity_mj = regulation_config.ENERGY_STORE_CAP_MJ
+        if initial_soc_mj is None:
+            initial_soc_mj = self.capacity_mj
         self.soc_mj = min(max(initial_soc_mj, 0.0), self.capacity_mj)
-        self.regen_efficiency = DRIVE_REGEN_ROUND_TRIP_EFFICIENCY
-        self.max_regen_power_kw = MAX_MGU_K_REGEN_POWER_KW
+        self.regen_efficiency = battery_config.DRIVE_REGEN_ROUND_TRIP_EFFICIENCY
+        self.max_regen_power_kw = regulation_config.MAX_MGU_K_REGEN_POWER_KW
         
     def update_soc(self, e_discharge_mj: float, e_regen_mj: float):
         """

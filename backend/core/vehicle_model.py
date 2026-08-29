@@ -3,14 +3,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import math
-from config.vehicle_config import (
-    VEHICLE_MASS_KG,
-    CDA,
-    CLA,
-    ROLLING_RESISTANCE_COEFFICIENT,
-    PEAK_LATERAL_ACCELERATION_G,
-    PEAK_LONGITUDINAL_DECELERATION_G
-)
+import config.vehicle_config as vehicle_config
 
 # Constants
 AIR_DENSITY_KG_M3 = 1.225
@@ -23,12 +16,16 @@ class VehicleModel:
     """
     
     def __init__(self):
-        self.mass = VEHICLE_MASS_KG
-        self.cda = CDA
-        self.cla = CLA
-        self.crr = ROLLING_RESISTANCE_COEFFICIENT
-        self.mu_lateral = PEAK_LATERAL_ACCELERATION_G
-        self.mu_longitudinal = PEAK_LONGITUDINAL_DECELERATION_G
+        # Read the config module's current attributes at construction time (not at import
+        # time) so a mode switch that mutates vehicle_config in place -- e.g. the dashboard's
+        # F1/EV-fleet toggle -- actually takes effect on the next race, instead of every
+        # VehicleModel silently keeping whatever values were live when this module first loaded.
+        self.mass = vehicle_config.VEHICLE_MASS_KG
+        self.cda = vehicle_config.CDA
+        self.cla = vehicle_config.CLA
+        self.crr = vehicle_config.ROLLING_RESISTANCE_COEFFICIENT
+        self.mu_lateral = vehicle_config.PEAK_LATERAL_ACCELERATION_G
+        self.mu_longitudinal = vehicle_config.PEAK_LONGITUDINAL_DECELERATION_G
         
     def get_corner_speed_limit(self, radius_m: float) -> float:
         """v_corner_max considering aerodynamic downforce"""
